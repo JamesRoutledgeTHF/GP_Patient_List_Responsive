@@ -1,0 +1,317 @@
+---
+title: "05_Patient_List_Responsive"
+output: html_document
+---
+
+# Patient List Analysis Respomsive Piece
+
+This report explores the impact of recent attempts to reduce ghost patients in the GP patients registered dataset
+
+## Introduction
+
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+
+practice_change <- monthly_practice %>%
+  filter(
+    Period %in% as.Date(c("2025-10-01", "2026-06-01"))
+  ) %>%
+  select(GP_Practice_Code, Period, Avg_Size) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Avg_Size
+  ) %>%
+  mutate(
+    Size_Change = `2026-06-01` - `2025-10-01`
+  ) %>%
+  arrange(Size_Change)
+
+ggplot(
+  practice_change,
+  aes(
+    x = reorder(GP_Practice_Code, Size_Change),
+    y = Size_Change
+  )
+) +
+  geom_col(fill = "steelblue") +
+  geom_hline(yintercept = 0, linetype = 2) +
+  coord_flip() +
+  labs(
+    title = "Change in GP practice list size",
+    subtitle = "June 2026 minus October 2025",
+    x = "GP Practice",
+    y = "Change in list size"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+
+
+
+```{r}
+ggplot(
+  monthly_overall,
+  aes(
+    x = Period,
+    y = Avg_Size
+  )
+) +
+  geom_line(linewidth = 1.2, colour = "steelblue") +
+  geom_point(size = 2, colour = "steelblue") +
+  scale_x_date(
+    date_breaks = "3 months",
+    date_labels = "%b\n%Y"
+  ) +
+  labs(
+    title = "Total GP registered population",
+    subtitle = "June 2022 to June 2026",
+    x = NULL,
+    y = "Total list size"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+
+
+```
+
+
+
+```{r}
+
+overall_from_practices <- monthly_practice %>%
+  filter(
+    Period >= as.Date("2025-10-01"),
+    Period <= as.Date("2026-06-30")
+  ) %>%
+  group_by(Period) %>%
+  summarise(
+    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(Period)
+
+ggplot(overall_from_practices, aes(x = Period, y = Total_Patients)) +
+  geom_line(linewidth = 1.3, colour = "steelblue") +
+  geom_point(size = 2.5, colour = "steelblue") +
+  scale_y_continuous(labels = comma) +
+  scale_x_date(
+    date_breaks = "1 month",
+    date_labels = "%b %Y"
+  ) +
+  labs(
+    title = "Total GP registered population",
+    subtitle = "October 2025 to June 2026 (summed from practice-level data)",
+    x = NULL,
+    y = "Total registered patients"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+```
+
+
+```{r}
+finances_unique <- finance_datasets %>%
+  distinct(Practice_Code, .keep_all = TRUE)
+
+monthly_practice_finance <- monthly_practice %>%
+  left_join(
+    finances_unique,
+    by = c("GP_Practice_Code" = "Practice_Code")
+  )
+
+monthly_practice_finance <- monthly_practice %>%
+  left_join(
+    finances_unique,
+    by = c("GP_Practice_Code" = "Practice_Code")
+  )
+
+practice_bands <- monthly_practice_finance %>%
+  filter(Period == as.Date("2025-10-01")) %>%
+  select(GP_Practice_Code, Avg_Size) %>%
+  mutate(
+    Size_Band = case_when(
+      Avg_Size <= 5000  ~ "0-5,000",
+      Avg_Size <= 10000 ~ "5,001-10,000",
+      Avg_Size <= 15000 ~ "10,001-15,000",
+      Avg_Size <= 20000 ~ "15,001-20,000",
+      TRUE              ~ "20,000+"
+    )
+  ) %>%
+  select(GP_Practice_Code, Size_Band)
+
+monthly_bands <- monthly_practice_finance %>%
+  left_join(practice_bands, by = "GP_Practice_Code")
+
+band_trends <- monthly_bands %>%
+  group_by(Size_Band, Period) %>%
+  summarise(
+    Sum_Practice_Size = sum(Avg_Size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(
+  band_trends,
+  aes(
+    x = Period,
+    y = Sum_Practice_Size,
+    colour = Size_Band
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  scale_x_date(
+    date_breaks = "1 month",
+    date_labels = "%b %Y"
+  ) +
+  labs(
+    title = "Total practice list size over time",
+    subtitle = "Practices grouped by their October 2025 list size",
+    x = NULL,
+    y = "Total list size",
+    colour = "October 2025\nsize band"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+band_trends_avg <- monthly_bands %>%
+  group_by(Size_Band, Period) %>%
+  summarise(
+    Avg_Practice_Size = mean(Avg_Size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(
+  band_trends_avg,
+  aes(
+    x = Period,
+    y = Avg_Practice_Size,
+    colour = Size_Band
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  scale_x_date(
+    date_breaks = "1 month",
+    date_labels = "%b %Y"
+  ) +
+  labs(
+    title = "Avg practice list size over time",
+    subtitle = "Practices grouped by their October 2025 list size",
+    x = NULL,
+    y = "Total list size",
+    colour = "October 2025\nsize band"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+```{r}
+contract_trends <- monthly_practice_finance %>%
+  group_by(Contract_Type, Period) %>%
+  summarise(
+    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+ggplot(
+  contract_trends,
+  aes(
+    x = Period,
+    y = Total_Patients,
+    colour = Contract_Type
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    title = "Total registered patients over time",
+    subtitle = "Grouped by Contact Type",
+    x = NULL,
+    y = "Total patients",
+    colour = "Contact Type"
+  ) +
+  theme_minimal()
+
+```
+
+
+```{r}
+Dispensing_trends <- monthly_practice_finance %>%
+  group_by(Dispensing_Practice, Period) %>%
+  summarise(
+    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+ggplot(
+  Dispensing_trends,
+  aes(
+    x = Period,
+    y = Total_Patients,
+    colour = Dispensing_Practice
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    title = "Total registered patients over time",
+    subtitle = "Grouped by Dispensing Status",
+    x = NULL,
+    y = "Total patients",
+    colour = "Dispensing Practice"
+  ) +
+  theme_minimal()
+
+```
+
+
+```{r}
+Rurality_trends <- monthly_practice_finance %>%
+  group_by(Practice_Rurality, Period) %>%
+  summarise(
+    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+ggplot(
+  Rurality_trends,
+  aes(
+    x = Period,
+    y = Total_Patients,
+    colour = Practice_Rurality
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    title = "Total registered patients over time",
+    subtitle = "Grouped by Rurality",
+    x = NULL,
+    y = "Total patients",
+    colour = "Rurality"
+  ) +
+  theme_minimal()
+
+```

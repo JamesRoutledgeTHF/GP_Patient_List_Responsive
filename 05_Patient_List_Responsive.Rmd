@@ -17,6 +17,16 @@ library(tidyr)
 library(ggplot2)
 library(scales)
 
+payments2425 <- read.csv("payments2425.csv")
+
+payments_lookup <- payments2425 %>%
+  select(
+    Practice.Code,
+    Region = NHS.England..Region..Name,
+    ICB_Name = Sub.ICB.Name
+  ) %>%
+  distinct(Practice.Code, .keep_all = TRUE)
+
 practice_change <- monthly_practice %>%
   filter(
     Period %in% as.Date(c("2025-10-01", "2026-06-01"))
@@ -126,6 +136,7 @@ ggplot(overall_from_practices, aes(x = Period, y = Total_Patients)) +
 
 ```{r}
 finances_unique <- finance_datasets %>%
+  filter(Metric == "Average payments per registered patient") %>%
   distinct(Practice_Code, .keep_all = TRUE)
 
 monthly_practice_finance <- monthly_practice %>%
@@ -134,10 +145,15 @@ monthly_practice_finance <- monthly_practice %>%
     by = c("GP_Practice_Code" = "Practice_Code")
   )
 
-monthly_practice_finance <- monthly_practice %>%
+monthly_practice_finance <- monthly_practice_finance %>%
   left_join(
-    finances_unique,
-    by = c("GP_Practice_Code" = "Practice_Code")
+    payments_lookup,
+    by = c("GP_Practice_Code" = "Practice.Code")
+  )
+
+monthly_practice_finance <- monthly_practice_finance %>%
+  mutate(
+    ICB_Name = str_replace(ICB_Name, "ICB.*$", "ICB")
   )
 
 practice_bands <- monthly_practice_finance %>%
@@ -314,4 +330,204 @@ ggplot(
   ) +
   theme_minimal()
 
+```
+
+
+```{r}
+
+Region_trends <- monthly_practice_finance %>%
+  filter(!is.na(Region)) %>%
+  group_by(Region, Period) %>%
+  summarise(
+    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+ggplot(
+  Region_trends,
+  aes(
+    x = Period,
+    y = Total_Patients,
+    colour = Region
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    title = "Total registered patients over time",
+    subtitle = "Grouped by Region",
+    x = NULL,
+    y = "Total patients",
+    colour = "Region"
+  ) +
+  theme_minimal()
+
+```
+
+
+```{r}
+
+ICB_trends <- monthly_practice_finance %>%
+  filter(!is.na(ICB_Name)) %>%
+  group_by(ICB_Name, Period) %>%
+  summarise(
+    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+ggplot(
+  ICB_trends,
+  aes(
+    x = Period,
+    y = Total_Patients,
+    colour = ICB_Name
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    title = "Total registered patients over time",
+    subtitle = "Grouped by ICB",
+    x = NULL,
+    y = "Total patients",
+    colour = "ICB"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 7),
+    legend.title = element_text(size = 9)
+  ) +
+  guides(colour = guide_legend(nrow = 4))
+```
+
+```{r}
+baseline <- monthly_practice_finance %>%
+  filter(Metric == "Average payments per registered patient") %>%
+  filter(Period == min(Period, na.rm = TRUE)) %>%
+  group_by(GP_Practice_Code) %>%
+  summarise(
+    Payment = mean(Metric_Value, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# assign deciles
+baseline <- baseline %>%
+  mutate(Payment_Decile = ntile(Payment, 10))
+
+# get ranges for legend labels
+decile_labels <- baseline %>%
+  group_by(Payment_Decile) %>%
+  summarise(
+    min_pay = min(Payment, na.rm = TRUE),
+    max_pay = max(Payment, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Decile_Label = paste0(
+      "D", Payment_Decile,
+      " (£", round(min_pay, 2),
+      "–£", round(max_pay, 2), ")"
+    )
+  )
+
+monthly_deciles <- monthly_practice_finance %>%
+  filter(Metric == "Average payments per registered patient") %>%
+  left_join(baseline, by = "GP_Practice_Code") %>%
+  left_join(decile_labels, by = "Payment_Decile")
+
+decile_trends <- monthly_deciles %>%
+  filter(!is.na(Payment_Decile)) %>%
+  group_by(Decile_Label, Period) %>%
+  summarise(
+    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+library(ggplot2)
+
+ggplot(
+  decile_trends,
+  aes(
+    x = Period,
+    y = Total_Patients,
+    colour = Decile_Label
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    title = "Total registered patients over time",
+    subtitle = "Grouped by deciles of payment per registered patient (baseline period)",
+    x = NULL,
+    y = "Total patients",
+    colour = "Payment decile (range)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 7)
+  )
+
+```
+
+
+```{r}
+gender_long <- monthly_overall %>%
+  select(Period, Male_Count, Female_Count) %>%
+  pivot_longer(
+    cols = c(Male_Count, Female_Count),
+    names_to = "Gender",
+    values_to = "Count"
+  )
+
+ggplot(gender_long, aes(x = Period, y = Count, colour = Gender)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  labs(
+    title = "Registered patients by gender over time",
+    x = "Period",
+    y = "Number of patients",
+    colour = "Gender"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+age_long <- monthly_overall %>%
+  select(
+    Period,
+    Age_0_9, Age_10_19, Age_20_29, Age_30_39,
+    Age_40_49, Age_50_59, Age_60_69, Age_70_79,
+    Age_80_89, Age_90_plus
+  ) %>%
+  pivot_longer(
+    cols = -Period,
+    names_to = "Age_Group",
+    values_to = "Count"
+  )
+
+age_long$Age_Group <- factor(
+  age_long$Age_Group,
+  levels = c(
+    "Age_0_9", "Age_10_19", "Age_20_29", "Age_30_39",
+    "Age_40_49", "Age_50_59", "Age_60_69", "Age_70_79",
+    "Age_80_89", "Age_90_plus"
+  )
+)
+
+ggplot(age_long, aes(x = Period, y = Count, colour = Age_Group)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 1.5) +
+  labs(
+    title = "Registered patients by age group over time",
+    x = "Period",
+    y = "Number of patients",
+    colour = "Age group"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```

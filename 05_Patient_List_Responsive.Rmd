@@ -9,15 +9,13 @@ This report explores the impact of recent attempts to reduce ghost patients in t
 
 ## Introduction
 
-
 ```{r}
 
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(scales)
-
-payments2425 <- read.csv("payments2425.csv")
+library(knitr)
 
 payments_lookup <- payments2425 %>%
   select(
@@ -31,10 +29,10 @@ practice_change <- monthly_practice %>%
   filter(
     Period %in% as.Date(c("2025-10-01", "2026-06-01"))
   ) %>%
-  select(GP_Practice_Code, Period, Avg_Size) %>%
+  select(GP_Practice_Code, Period, Total_Size) %>%
   pivot_wider(
     names_from = Period,
-    values_from = Avg_Size
+    values_from = Total_Size
   ) %>%
   mutate(
     Size_Change = `2026-06-01` - `2025-10-01`
@@ -61,17 +59,12 @@ ggplot(
 
 ```
 
-
-
-
-
-
 ```{r}
 ggplot(
   monthly_overall,
   aes(
     x = Period,
-    y = Avg_Size
+    y = Total_Size
   )
 ) +
   geom_line(linewidth = 1.2, colour = "steelblue") +
@@ -92,11 +85,25 @@ ggplot(
   )
 
 
-
+# Month-on-month change table
+monthly_overall %>%
+  arrange(Period) %>%
+  mutate(
+    `Number change` = Total_Size - lag(Total_Size),
+    `% change` = (Total_Size - lag(Total_Size)) / lag(Total_Size)
+  ) %>%
+  transmute(
+    Month = format(Period, "%b %Y"),
+    `Total list size` = comma(Total_Size),
+    `Number change` = comma(`Number change`),
+    `% change` = percent(`% change`, accuracy = 0.01)
+  ) %>%
+  kable(
+    align = c("l", "r", "r", "r"),
+    caption = "Month-on-month change in GP registered population"
+  )
 
 ```
-
-
 
 ```{r}
 
@@ -107,7 +114,7 @@ overall_from_practices <- monthly_practice %>%
   ) %>%
   group_by(Period) %>%
   summarise(
-    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    Total_Patients = sum(Total_Size, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   arrange(Period)
@@ -133,7 +140,6 @@ ggplot(overall_from_practices, aes(x = Period, y = Total_Patients)) +
 
 ```
 
-
 ```{r}
 finances_unique <- finance_datasets %>%
   filter(Metric == "Average payments per registered patient") %>%
@@ -158,13 +164,13 @@ monthly_practice_finance <- monthly_practice_finance %>%
 
 practice_bands <- monthly_practice_finance %>%
   filter(Period == as.Date("2025-10-01")) %>%
-  select(GP_Practice_Code, Avg_Size) %>%
+  select(GP_Practice_Code, Total_Size) %>%
   mutate(
     Size_Band = case_when(
-      Avg_Size <= 5000  ~ "0-5,000",
-      Avg_Size <= 10000 ~ "5,001-10,000",
-      Avg_Size <= 15000 ~ "10,001-15,000",
-      Avg_Size <= 20000 ~ "15,001-20,000",
+      Total_Size <= 5000  ~ "0-5,000",
+      Total_Size <= 10000 ~ "5,001-10,000",
+      Total_Size <= 15000 ~ "10,001-15,000",
+      Total_Size <= 20000 ~ "15,001-20,000",
       TRUE              ~ "20,000+"
     )
   ) %>%
@@ -174,9 +180,10 @@ monthly_bands <- monthly_practice_finance %>%
   left_join(practice_bands, by = "GP_Practice_Code")
 
 band_trends <- monthly_bands %>%
+    filter(!is.na(Size_Band)) %>%
   group_by(Size_Band, Period) %>%
   summarise(
-    Sum_Practice_Size = sum(Avg_Size, na.rm = TRUE),
+    Sum_Practice_Size = sum(Total_Size, na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -206,45 +213,39 @@ ggplot(
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
 
-band_trends_avg <- monthly_bands %>%
-  group_by(Size_Band, Period) %>%
-  summarise(
-    Avg_Practice_Size = mean(Avg_Size, na.rm = TRUE),
-    .groups = "drop"
+band_change <- band_trends %>%
+  filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
+  select(Size_Band, Period, Sum_Practice_Size) %>%
+  mutate(Period = format(Period, "%b %Y")) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Sum_Practice_Size
+  ) %>%
+  mutate(
+    `Number change` = `Jun 2026` - `Oct 2025`,
+    `% change` = (`Jun 2026` - `Oct 2025`) / `Oct 2025`
+  ) %>%
+  mutate(
+    `Oct 2025` = comma(`Oct 2025`),
+    `Jun 2026` = comma(`Jun 2026`),
+    `Number change` = comma(`Number change`),
+    `% change` = percent(`% change`, accuracy = 0.1)
   )
 
-ggplot(
-  band_trends_avg,
-  aes(
-    x = Period,
-    y = Avg_Practice_Size,
-    colour = Size_Band
-  )
-) +
-  geom_line(linewidth = 1.2) +
-  geom_point(size = 2) +
-  scale_x_date(
-    date_breaks = "1 month",
-    date_labels = "%b %Y"
-  ) +
-  labs(
-    title = "Avg practice list size over time",
-    subtitle = "Practices grouped by their October 2025 list size",
-    x = NULL,
-    y = "Total list size",
-    colour = "October 2025\nsize band"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
+kable(
+  band_change,
+  align = c("l", "r", "r", "r", "r"),
+  caption = "Change in registered patients by October 2025 practice size band (October 2025 to June 2026)"
+)
+
 ```
 
 ```{r}
 contract_trends <- monthly_practice_finance %>%
+    filter(!is.na(Contract_Type)) %>%
   group_by(Contract_Type, Period) %>%
   summarise(
-    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    Total_Patients = sum(Total_Size, na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -268,14 +269,40 @@ ggplot(
   ) +
   theme_minimal()
 
-```
 
+contract_change <- contract_trends %>%
+  filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
+  select(Contract_Type, Period, Total_Patients) %>%
+  mutate(Period = format(Period, "%b %Y")) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Total_Patients
+  ) %>%
+  mutate(
+    `Number change` = `Jun 2026` - `Oct 2025`,
+    `% change` = (`Jun 2026` - `Oct 2025`) / `Oct 2025`
+  ) %>%
+  mutate(
+    `Oct 2025` = comma(`Oct 2025`),
+    `Jun 2026` = comma(`Jun 2026`),
+    `Number change` = comma(`Number change`),
+    `% change` = percent(`% change`, accuracy = 0.1)
+  )
+
+kable(
+  contract_change,
+  align = c("l", "r", "r", "r", "r"),
+  caption = "Change in registered patients by contract type (October 2025 to June 2026)"
+)
+
+```
 
 ```{r}
 Dispensing_trends <- monthly_practice_finance %>%
+    filter(!is.na(Dispensing_Practice)) %>%
   group_by(Dispensing_Practice, Period) %>%
   summarise(
-    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    Total_Patients = sum(Total_Size, na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -299,14 +326,40 @@ ggplot(
   ) +
   theme_minimal()
 
-```
 
+dispensing_change <- Dispensing_trends %>%
+  filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
+  select(Dispensing_Practice, Period, Total_Patients) %>%
+  mutate(Period = format(Period, "%b %Y")) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Total_Patients
+  ) %>%
+  mutate(
+    `Number change` = `Jun 2026` - `Oct 2025`,
+    `% change` = (`Jun 2026` - `Oct 2025`) / `Oct 2025`
+  ) %>%
+  mutate(
+    `Oct 2025` = comma(`Oct 2025`),
+    `Jun 2026` = comma(`Jun 2026`),
+    `Number change` = comma(`Number change`),
+    `% change` = percent(`% change`, accuracy = 0.1)
+  )
+
+kable(
+  dispensing_change,
+  align = c("l", "r", "r", "r", "r"),
+  caption = "Change in registered patients by dispensing status (October 2025 to June 2026)"
+)
+
+```
 
 ```{r}
 Rurality_trends <- monthly_practice_finance %>%
+      filter(!is.na(Practice_Rurality)) %>%
   group_by(Practice_Rurality, Period) %>%
   summarise(
-    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    Total_Patients = sum(Total_Size, na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -330,8 +383,43 @@ ggplot(
   ) +
   theme_minimal()
 
+
+rurality_change <- Rurality_trends %>%
+  filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
+  select(Practice_Rurality, Period, Total_Patients) %>%
+  mutate(Period = format(Period, "%b %Y")) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Total_Patients
+  ) %>%
+  mutate(
+    `Number change` = `Jun 2026` - `Oct 2025`,
+    `% change` = (`Jun 2026` - `Oct 2025`) / `Oct 2025`
+  ) %>%
+  mutate(
+    `Oct 2025` = comma(`Oct 2025`),
+    `Jun 2026` = comma(`Jun 2026`),
+    `Number change` = comma(`Number change`),
+    `% change` = percent(`% change`, accuracy = 0.1)
+  )
+
+kable(
+  rurality_change,
+  align = c("l", "r", "r", "r", "r"),
+  caption = "Change in registered patients by practice rurality (October 2025 to June 2026)"
+)
+
 ```
 
+```{r}
+
+
+
+
+
+
+
+```
 
 ```{r}
 
@@ -339,7 +427,7 @@ Region_trends <- monthly_practice_finance %>%
   filter(!is.na(Region)) %>%
   group_by(Region, Period) %>%
   summarise(
-    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    Total_Patients = sum(Total_Size, na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -363,8 +451,32 @@ ggplot(
   ) +
   theme_minimal()
 
-```
+region_change <- Region_trends %>%
+  filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
+  select(Region, Period, Total_Patients) %>%
+  mutate(Period = format(Period, "%b %Y")) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Total_Patients
+  ) %>%
+  mutate(
+    `Number change` = `Jun 2026` - `Oct 2025`,
+    `% change` = (`Jun 2026` - `Oct 2025`) / `Oct 2025`
+  ) %>%
+  mutate(
+    `Oct 2025` = comma(`Oct 2025`),
+    `Jun 2026` = comma(`Jun 2026`),
+    `Number change` = comma(`Number change`),
+    `% change` = percent(`% change`, accuracy = 0.1)
+  ) %>%
+  arrange(desc(readr::parse_number(`Number change`)))
 
+kable(
+  region_change,
+  align = c("l", "r", "r", "r", "r"),
+  caption = "Change in registered patients by region (October 2025 to June 2026)"
+)
+```
 
 ```{r}
 
@@ -372,7 +484,7 @@ ICB_trends <- monthly_practice_finance %>%
   filter(!is.na(ICB_Name)) %>%
   group_by(ICB_Name, Period) %>%
   summarise(
-    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    Total_Patients = sum(Total_Size, na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -401,6 +513,33 @@ ggplot(
     legend.title = element_text(size = 9)
   ) +
   guides(colour = guide_legend(nrow = 4))
+
+
+icb_change <- ICB_trends %>%
+  filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
+  select(ICB_Name, Period, Total_Patients) %>%
+  mutate(Period = format(Period, "%b %Y")) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Total_Patients
+  ) %>%
+  mutate(
+    `Number change` = `Jun 2026` - `Oct 2025`,
+    `% change` = (`Jun 2026` - `Oct 2025`) / `Oct 2025`
+  ) %>%
+  mutate(
+    `Oct 2025` = comma(`Oct 2025`),
+    `Jun 2026` = comma(`Jun 2026`),
+    `Number change` = comma(`Number change`),
+    `% change` = percent(`% change`, accuracy = 0.1)
+  ) %>%
+  arrange(desc(readr::parse_number(`Number change`)))
+
+kable(
+  icb_change,
+  align = c("l", "r", "r", "r", "r"),
+  caption = "Change in registered patients by ICB (October 2025 to June 2026)"
+)
 ```
 
 ```{r}
@@ -442,11 +581,9 @@ decile_trends <- monthly_deciles %>%
   filter(!is.na(Payment_Decile)) %>%
   group_by(Decile_Label, Period) %>%
   summarise(
-    Total_Patients = sum(Avg_Size, na.rm = TRUE),
+    Total_Patients = sum(Total_Size, na.rm = TRUE),
     .groups = "drop"
   )
-
-library(ggplot2)
 
 ggplot(
   decile_trends,
@@ -471,8 +608,35 @@ ggplot(
     legend.text = element_text(size = 7)
   )
 
-```
+decile_change <- decile_trends %>%
+  filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
+  select(Decile_Label, Period, Total_Patients) %>%
+  mutate(Period = format(Period, "%b %Y")) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Total_Patients
+  ) %>%
+  mutate(
+    `Number change` = `Jun 2026` - `Oct 2025`,
+    `% change` = (`Jun 2026` - `Oct 2025`) / `Oct 2025`,
+    Decile = as.numeric(sub("D([0-9]+).*", "\\1", Decile_Label))
+  ) %>%
+  arrange(Decile) %>%
+  select(-Decile) %>%
+  mutate(
+    `Oct 2025` = comma(`Oct 2025`),
+    `Jun 2026` = comma(`Jun 2026`),
+    `Number change` = comma(`Number change`),
+    `% change` = percent(`% change`, accuracy = 0.1)
+  )
 
+kable(
+  decile_change,
+  align = c("l", "r", "r", "r", "r"),
+  caption = "Change in registered patients by payment-per-patient decile (October 2025 to June 2026)"
+)
+
+```
 
 ```{r}
 gender_long <- monthly_overall %>%
@@ -483,7 +647,10 @@ gender_long <- monthly_overall %>%
     values_to = "Count"
   )
 
-ggplot(gender_long, aes(x = Period, y = Count, colour = Gender)) +
+gender_long_filtered <- gender_long %>%
+  filter(Period >= as.Date("2025-10-01"))
+
+ggplot(gender_long_filtered, aes(x = Period, y = Count, colour = Gender)) +
   geom_line(linewidth = 1.2) +
   geom_point(size = 2) +
   labs(
@@ -494,6 +661,29 @@ ggplot(gender_long, aes(x = Period, y = Count, colour = Gender)) +
   ) +
   theme_minimal()
 
+gender_change <- gender_long %>%
+  filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
+  mutate(Period = format(Period, "%b %Y")) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Count
+  ) %>%
+  mutate(
+    `Number change` = `Jun 2026` - `Oct 2025`,
+    `% change` = (`Jun 2026` - `Oct 2025`) / `Oct 2025`
+  ) %>%
+  mutate(
+    `Oct 2025` = comma(`Oct 2025`),
+    `Jun 2026` = comma(`Jun 2026`),
+    `Number change` = comma(`Number change`),
+    `% change` = percent(`% change`, accuracy = 0.1)
+  )
+
+kable(
+  gender_change,
+  align = c("l", "r", "r", "r", "r"),
+  caption = "Change in registered patients by gender (October 2025 to June 2026)"
+)
 ```
 
 ```{r}
@@ -530,4 +720,29 @@ ggplot(age_long, aes(x = Period, y = Count, colour = Age_Group)) +
   ) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+age_change <- age_long %>%
+  filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
+  mutate(Period = format(Period, "%b %Y")) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Count
+  ) %>%
+  mutate(
+    `Number change` = `Jun 2026` - `Oct 2025`,
+    `% change` = (`Jun 2026` - `Oct 2025`) / `Oct 2025`
+  ) %>%
+  mutate(
+    `Oct 2025` = comma(`Oct 2025`),
+    `Jun 2026` = comma(`Jun 2026`),
+    `Number change` = comma(`Number change`),
+    `% change` = percent(`% change`, accuracy = 0.1)
+  ) %>%
+  arrange(match(Age_Group, levels(age_long$Age_Group)))
+
+kable(
+  age_change,
+  align = c("l", "r", "r", "r", "r"),
+  caption = "Change in registered patients by age group (October 2025 to June 2026)"
+)
 ```

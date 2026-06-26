@@ -1,4 +1,8 @@
 #function to get GP practice level data 
+library(fingertipsR)
+install.packages(c("curl", "httr", "miniUI"))
+install.packages("fingertipsR", repos = "https://dev.ropensci.org")
+
 get_gp_stats <- function(
     con,
     period = c("monthly", "yearly", "financial"),
@@ -181,7 +185,7 @@ monthly_overall <- get_gp_stats(
   con,
   period = "monthly",
   level = "overall",
-  start_date = "2025-10-01",
+  start_date = "2023-06-01",
   output_type = "counts"
   #,end_date = "2024-12-31"
 )

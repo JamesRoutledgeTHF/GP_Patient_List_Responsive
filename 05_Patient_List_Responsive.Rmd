@@ -1,21 +1,41 @@
 ---
 title: "05_Patient_List_Responsive"
-output: html_document
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
 ---
 
-# Patient List Analysis Respomsive Piece
+# Patient List Analysis Responsive Piece
 
 This report explores the impact of recent attempts to reduce ghost patients in the GP patients registered dataset
 
 ## Introduction
 
-```{r}
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+
+knitr::opts_chunk$set(
+  fig.width = 10,
+  fig.height = 5
+)
+```
+
+```{r, echo = FALSE}
 
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(scales)
 library(knitr)
+library(stringr)
+
+source("01_connect_to_facts_and_dimensions.R")
+source("03_Payments_To_GP_Practice.R")
+source("06_Registered_Patients.R")
+source("07_Get_LSOA_Data.R")
+
+payments2425 <- read.csv("payments2425.csv", stringsAsFactors = FALSE)
 
 payments_lookup <- payments2425 %>%
   select(
@@ -39,27 +59,29 @@ practice_change <- monthly_practice %>%
   ) %>%
   arrange(Size_Change)
 
-ggplot(
-  practice_change,
-  aes(
-    x = reorder(GP_Practice_Code, Size_Change),
-    y = Size_Change
-  )
-) +
-  geom_col(fill = "steelblue") +
-  geom_hline(yintercept = 0, linetype = 2) +
-  coord_flip() +
-  labs(
-    title = "Change in GP practice list size",
-    subtitle = "June 2026 minus October 2025",
-    x = "GP Practice",
-    y = "Change in list size"
-  ) +
-  theme_minimal()
+# ggplot(
+#   practice_change,
+#   aes(
+#     x = reorder(GP_Practice_Code, Size_Change),
+#     y = Size_Change
+#   )
+# ) +
+#   geom_col(fill = "steelblue") +
+#   geom_hline(yintercept = 0, linetype = 2) +
+#   coord_flip() +
+#   labs(
+#     title = "Change in GP practice list size (trimmed)",
+#     subtitle = "Excluding top and bottom 5% of practices",
+#     x = "GP Practice",
+#     y = "Change in list size"
+#   ) +
+#   theme_minimal()
 
 ```
 
-```{r}
+Total GP List size has seen an increase over time until it's peak in November 2025 at 63,947,100, after this total list size has seen a continued decrease and currently stands at 63,488,912 as of June 2026.
+
+```{r, echo = FALSE}
 ggplot(
   monthly_overall,
   aes(
@@ -70,12 +92,15 @@ ggplot(
   geom_line(linewidth = 1.2, colour = "steelblue") +
   geom_point(size = 2, colour = "steelblue") +
   scale_x_date(
-    date_breaks = "3 months",
+    date_breaks = "2 months",
     date_labels = "%b\n%Y"
   ) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
   labs(
-    title = "Total GP registered population",
-    subtitle = "June 2022 to June 2026",
+    title = "Total GP list size",
+    subtitle = "June 2023 to June 2026",
     x = NULL,
     y = "Total list size"
   ) +
@@ -85,27 +110,29 @@ ggplot(
   )
 
 
-# Month-on-month change table
-monthly_overall %>%
-  arrange(Period) %>%
-  mutate(
-    `Number change` = Total_Size - lag(Total_Size),
-    `% change` = (Total_Size - lag(Total_Size)) / lag(Total_Size)
-  ) %>%
-  transmute(
-    Month = format(Period, "%b %Y"),
-    `Total list size` = comma(Total_Size),
-    `Number change` = comma(`Number change`),
-    `% change` = percent(`% change`, accuracy = 0.01)
-  ) %>%
-  kable(
-    align = c("l", "r", "r", "r"),
-    caption = "Month-on-month change in GP registered population"
-  )
+# # Month-on-month change table
+# monthly_overall %>%
+#   arrange(Period) %>%
+#   mutate(
+#     `Number change` = Total_Size - lag(Total_Size),
+#     `% change` = (Total_Size - lag(Total_Size)) / lag(Total_Size)
+#   ) %>%
+#   transmute(
+#     Month = format(Period, "%b %Y"),
+#     `Total list size` = comma(Total_Size),
+#     `Number change` = comma(`Number change`),
+#     `% change` = percent(`% change`, accuracy = 0.01)
+#   ) %>%
+#   kable(
+#     align = c("l", "r", "r", "r"),
+#     caption = "Month-on-month change in GP registered population"
+#   )
 
 ```
 
-```{r}
+Focusing on the peak at November 2025 we can see that the list size has dropped 458,188 patients as of June 2026 a 0.72% decrease.
+
+```{r, echo = FALSE}
 
 overall_from_practices <- monthly_practice %>%
   filter(
@@ -122,7 +149,10 @@ overall_from_practices <- monthly_practice %>%
 ggplot(overall_from_practices, aes(x = Period, y = Total_Patients)) +
   geom_line(linewidth = 1.3, colour = "steelblue") +
   geom_point(size = 2.5, colour = "steelblue") +
-  scale_y_continuous(labels = comma) +
+  scale_y_continuous(
+    breaks = 25.2e6,
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
   scale_x_date(
     date_breaks = "1 month",
     date_labels = "%b %Y"
@@ -140,7 +170,53 @@ ggplot(overall_from_practices, aes(x = Period, y = Total_Patients)) +
 
 ```
 
-```{r}
+Trying to match similar work done by Helen Salisbury in the BMJ looking at the change between November 2025 and May 2026 we can match the 344,000 patients removed they were referencing, and a similar cost if using a global sum payment of 121.79.
+
+```{r, echo = FALSE}
+overall_change_table <- overall_from_practices %>%
+  filter(Period %in% as.Date(c("2025-11-01", "2026-05-01"))) %>%
+  mutate(Period = format(Period, "%b %Y")) %>%
+  select(Period, Total_Patients) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Total_Patients
+  ) %>%
+  mutate(
+    Change = `May 2026` - `Nov 2025`,
+    Cost = Change * 121.79,
+    `% change` = Change / `Nov 2025`
+  )
+
+overall_change_table <- overall_change_table %>%
+  mutate(
+    `Nov 2025` = comma(`Nov 2025`),
+    `May 2026` = comma(`May 2026`),
+    Change = comma(Change),
+    `% change` = percent(`% change`, accuracy = 0.01),
+    Cost = label_currency(prefix = "£", accuracy = 1)(Cost)
+  )
+
+overall_change_table <- overall_change_table %>%
+  select(`Nov 2025`, `May 2026`, Change, `% change`, Cost)
+
+overall_change_table[] <- lapply(overall_change_table, function(x) {
+  if (is.character(x)) {
+    iconv(x, from = "", to = "UTF-8", sub = "")
+  } else {
+    x
+  }
+})
+
+kable(
+  overall_change_table,
+  align = c("r", "r", "r", "r", "r"),
+  caption = "Overall change in GP registered population and cost (Dec 2025 to May 2026)"
+)
+```
+
+When grouping practices by their list size in October 2025 we can see that smaller practices have seen a 1.5% decrease over the time period while practices with 20k+ patients have seen an increase of 0.4% in this time period.
+
+```{r, echo = FALSE}
 finances_unique <- finance_datasets %>%
   filter(Metric == "Average payments per registered patient") %>%
   distinct(Practice_Code, .keep_all = TRUE)
@@ -171,16 +247,16 @@ practice_bands <- monthly_practice_finance %>%
       Total_Size <= 10000 ~ "5,001-10,000",
       Total_Size <= 15000 ~ "10,001-15,000",
       Total_Size <= 20000 ~ "15,001-20,000",
-      TRUE              ~ "20,000+"
+      TRUE                ~ "20,000+"
     )
   ) %>%
   select(GP_Practice_Code, Size_Band)
 
 monthly_bands <- monthly_practice_finance %>%
-  left_join(practice_bands, by = "GP_Practice_Code")
+  left_join(practice_bands, by = "GP_Practice_Code") %>%
+  filter(!is.na(Size_Band))
 
 band_trends <- monthly_bands %>%
-    filter(!is.na(Size_Band)) %>%
   group_by(Size_Band, Period) %>%
   summarise(
     Sum_Practice_Size = sum(Total_Size, na.rm = TRUE),
@@ -201,9 +277,11 @@ ggplot(
     date_breaks = "1 month",
     date_labels = "%b %Y"
   ) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
   labs(
-    title = "Total practice list size over time",
-    subtitle = "Practices grouped by their October 2025 list size",
+    title = "Total practice list size over time grouped by their October 2025 list size",
     x = NULL,
     y = "Total list size",
     colour = "October 2025\nsize band"
@@ -232,6 +310,21 @@ band_change <- band_trends %>%
     `% change` = percent(`% change`, accuracy = 0.1)
   )
 
+band_change <- band_change %>%
+  mutate(
+    Size_Band = factor(
+      Size_Band,
+      levels = c(
+        "0-5,000",
+        "5,001-10,000",
+        "10,001-15,000",
+        "15,001-20,000",
+        "20,000+"
+      )
+    )
+  ) %>%
+  arrange(Size_Band)
+
 kable(
   band_change,
   align = c("l", "r", "r", "r", "r"),
@@ -240,7 +333,9 @@ kable(
 
 ```
 
-```{r}
+When looking at list size by practice contract type we can see that practices with APMS contracts have seen the largest decrease losing 82,742 patients or 3.1% of their list size.
+
+```{r, echo = FALSE}
 contract_trends <- monthly_practice_finance %>%
     filter(!is.na(Contract_Type)) %>%
   group_by(Contract_Type, Period) %>%
@@ -260,12 +355,14 @@ ggplot(
 ) +
   geom_line(linewidth = 1.2) +
   geom_point(size = 2) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
   labs(
-    title = "Total registered patients over time",
-    subtitle = "Grouped by Contact Type",
+    title = "Total practice list size by contract type",
     x = NULL,
     y = "Total patients",
-    colour = "Contact Type"
+    colour = "Contract Type"
   ) +
   theme_minimal()
 
@@ -297,7 +394,9 @@ kable(
 
 ```
 
-```{r}
+List size for non-dispensing practices saw the majority of the list size change. Losing 426,471 or 0.8% of their list size. While dispensing practices lost 0.02%. This means out of all the patients removed non-dispensing practices have seen 99.5% the removals.
+
+```{r, echo = FALSE}
 Dispensing_trends <- monthly_practice_finance %>%
     filter(!is.na(Dispensing_Practice)) %>%
   group_by(Dispensing_Practice, Period) %>%
@@ -305,7 +404,6 @@ Dispensing_trends <- monthly_practice_finance %>%
     Total_Patients = sum(Total_Size, na.rm = TRUE),
     .groups = "drop"
   )
-
 
 ggplot(
   Dispensing_trends,
@@ -317,9 +415,11 @@ ggplot(
 ) +
   geom_line(linewidth = 1.2) +
   geom_point(size = 2) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
   labs(
-    title = "Total registered patients over time",
-    subtitle = "Grouped by Dispensing Status",
+    title = "Total practice list size by dispensing status",
     x = NULL,
     y = "Total patients",
     colour = "Dispensing Practice"
@@ -354,7 +454,9 @@ kable(
 
 ```
 
-```{r}
+List size for urban practices also saw the majority of the list size change. Losing 428,846 or 0.8% of their list size.
+
+```{r, echo = FALSE}
 Rurality_trends <- monthly_practice_finance %>%
       filter(!is.na(Practice_Rurality)) %>%
   group_by(Practice_Rurality, Period) %>%
@@ -374,9 +476,11 @@ ggplot(
 ) +
   geom_line(linewidth = 1.2) +
   geom_point(size = 2) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
   labs(
-    title = "Total registered patients over time",
-    subtitle = "Grouped by Rurality",
+    title = "Total practice list size grouped by rurality",
     x = NULL,
     y = "Total patients",
     colour = "Rurality"
@@ -411,17 +515,97 @@ kable(
 
 ```
 
-```{r}
+Using GP IMD deciles from fingertips which uses Patients Registered at a GP practice LSOA level data to map patient LSOA IMD to create a practice level. We can see that in general more deprived practices have been losing a higher % of their list size over this time period. (May need to check this again - do we expect practices in less depirved areas to have a higher list size?)
+
+```{r, echo = FALSE}
+
+GP_IMD_deciles <- read.csv("GP_IMD_deciles.csv", stringsAsFactors = FALSE)
+
+GP_IMD_deciles <- GP_IMD_deciles %>%
+  mutate(IMD_Decile = ntile(Value, 10))
+
+monthly_practice_finance_IMD <- monthly_practice_finance %>%
+  left_join(
+    GP_IMD_deciles,
+    by = c("GP_Practice_Code" = "AreaCode")
+  )
+
+IMD_trends <- monthly_practice_finance_IMD %>%
+  filter(!is.na(IMD_Decile)) %>%
+  group_by(IMD_Decile, Period) %>%
+  summarise(
+    Total_Patients = sum(Total_Size, na.rm = TRUE),
+    .groups = "drop"
+  )
 
 
+ggplot(
+  IMD_trends,
+  aes(
+    x = Period,
+    y = Total_Patients,
+    colour = factor(IMD_Decile,
+                    levels = 1:10,
+                    labels = c(
+                      "1 (Least deprived)",
+                      "2",
+                      "3",
+                      "4",
+                      "5",
+                      "6",
+                      "7",
+                      "8",
+                      "9",
+                      "10 (Most deprived)"
+                    ))
+  )
+) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 2) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
+  labs(
+    title = "Total registered patients over time",
+    subtitle = "Grouped by IMD decile",
+    x = NULL,
+    y = "Total patients",
+    colour = "IMD decile"
+  ) +
+  theme_minimal()
 
+IMD_change <- IMD_trends %>%
+  filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
+  select(IMD_Decile, Period, Total_Patients) %>%
+  mutate(Period = format(Period, "%b %Y")) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Total_Patients
+  ) %>%
+  mutate(
+    `Number change` = `Jun 2026` - `Oct 2025`,
+    `% change` = (`Jun 2026` - `Oct 2025`) / `Oct 2025`
+  ) %>%
+  arrange(IMD_Decile) %>%
+  mutate(
+    `Oct 2025` = scales::comma(`Oct 2025`),
+    `Jun 2026` = scales::comma(`Jun 2026`),
+    `Number change` = scales::comma(`Number change`),
+    `% change` = scales::percent(`% change`, accuracy = 0.1)
+  )
 
-
+knitr::kable(
+  IMD_change,
+  align = c("c", "r", "r", "r", "r"),
+  caption = "Change in registered patients by practice IMD decile (October 2025 to June 2026)"
+)
 
 
 ```
 
-```{r}
+The London region has lost a larger percentage of it's list size (1.5%) in this time period compared to other regions.
+
+```{r, echo = FALSE}
 
 Region_trends <- monthly_practice_finance %>%
   filter(!is.na(Region)) %>%
@@ -442,14 +626,19 @@ ggplot(
 ) +
   geom_line(linewidth = 1.2) +
   geom_point(size = 2) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
   labs(
-    title = "Total registered patients over time",
-    subtitle = "Grouped by Region",
+    title = "Total List Size by NHS Region",
     x = NULL,
     y = "Total patients",
     colour = "Region"
   ) +
-  theme_minimal()
+  theme_minimal() +
+  theme(
+    legend.position = "bottom"
+  )
 
 region_change <- Region_trends %>%
   filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
@@ -478,71 +667,72 @@ kable(
 )
 ```
 
-```{r}
-
-ICB_trends <- monthly_practice_finance %>%
-  filter(!is.na(ICB_Name)) %>%
-  group_by(ICB_Name, Period) %>%
-  summarise(
-    Total_Patients = sum(Total_Size, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-
-ggplot(
-  ICB_trends,
-  aes(
-    x = Period,
-    y = Total_Patients,
-    colour = ICB_Name
-  )
-) +
-  geom_line(linewidth = 1.2) +
-  geom_point(size = 2) +
-  labs(
-    title = "Total registered patients over time",
-    subtitle = "Grouped by ICB",
-    x = NULL,
-    y = "Total patients",
-    colour = "ICB"
-  ) +
-  theme_minimal() +
-  theme(
-    legend.position = "bottom",
-    legend.text = element_text(size = 7),
-    legend.title = element_text(size = 9)
-  ) +
-  guides(colour = guide_legend(nrow = 4))
-
-
-icb_change <- ICB_trends %>%
-  filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
-  select(ICB_Name, Period, Total_Patients) %>%
-  mutate(Period = format(Period, "%b %Y")) %>%
-  pivot_wider(
-    names_from = Period,
-    values_from = Total_Patients
-  ) %>%
-  mutate(
-    `Number change` = `Jun 2026` - `Oct 2025`,
-    `% change` = (`Jun 2026` - `Oct 2025`) / `Oct 2025`
-  ) %>%
-  mutate(
-    `Oct 2025` = comma(`Oct 2025`),
-    `Jun 2026` = comma(`Jun 2026`),
-    `Number change` = comma(`Number change`),
-    `% change` = percent(`% change`, accuracy = 0.1)
-  ) %>%
-  arrange(desc(readr::parse_number(`Number change`)))
-
-kable(
-  icb_change,
-  align = c("l", "r", "r", "r", "r"),
-  caption = "Change in registered patients by ICB (October 2025 to June 2026)"
-)
+```{r, echo = FALSE}
+# 
+# ICB_trends <- monthly_practice_finance %>%
+#   filter(!is.na(ICB_Name)) %>%
+#   group_by(ICB_Name, Period) %>%
+#   summarise(
+#     Total_Patients = sum(Total_Size, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+# 
+# 
+# ggplot(
+#   ICB_trends,
+#   aes(
+#     x = Period,
+#     y = Total_Patients,
+#     colour = ICB_Name
+#   )
+# ) +
+#   geom_line(linewidth = 1.2) +
+#   geom_point(size = 2) +
+#   scale_y_continuous(
+#     labels = scales::label_number(scale = 1e-6, suffix = "m")
+#   ) +
+#   labs(
+#     title = "Total list size grouped by ICB",
+#     x = NULL,
+#     y = "Total patients",
+#     colour = "ICB"
+#   ) +
+#   theme_minimal() +
+#   theme(
+#     legend.position = "bottom",
+#     legend.text = element_text(size = 7),
+#     legend.title = element_text(size = 9)
+#   ) +
+#   guides(colour = guide_legend(nrow = 4))
+# 
+# icb_change <- ICB_trends %>%
+#   filter(Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
+#   select(ICB_Name, Period, Total_Patients) %>%
+#   mutate(Period = format(Period, "%b %Y")) %>%
+#   pivot_wider(
+#     names_from = Period,
+#     values_from = Total_Patients
+#   ) %>%
+#   mutate(
+#     `Number change` = `Jun 2026` - `Oct 2025`,
+#     `% change` = (`Jun 2026` - `Oct 2025`) / `Oct 2025`
+#   ) %>%
+#   mutate(
+#     `Oct 2025` = comma(`Oct 2025`),
+#     `Jun 2026` = comma(`Jun 2026`),
+#     `Number change` = comma(`Number change`),
+#     `% change` = percent(`% change`, accuracy = 0.1)
+#   ) %>%
+#   arrange(desc(readr::parse_number(`Number change`)))
+# 
+# kable(
+#   icb_change,
+#   align = c("l", "r", "r", "r", "r"),
+#   caption = "Change in registered patients by ICB (October 2025 to June 2026)"
+# )
 ```
 
-```{r}
+```{r, echo = FALSE}
 baseline <- monthly_practice_finance %>%
   filter(Metric == "Average payments per registered patient") %>%
   filter(Period == min(Period, na.rm = TRUE)) %>%
@@ -585,6 +775,11 @@ decile_trends <- monthly_deciles %>%
     .groups = "drop"
   )
 
+decile_trends <- decile_trends %>%
+  mutate(
+    Decile_Label = iconv(Decile_Label, from = "", to = "UTF-8", sub = "")
+  )
+
 ggplot(
   decile_trends,
   aes(
@@ -595,9 +790,11 @@ ggplot(
 ) +
   geom_line(linewidth = 1.2) +
   geom_point(size = 2) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
   labs(
-    title = "Total registered patients over time",
-    subtitle = "Grouped by deciles of payment per registered patient (baseline period)",
+    title = "Total list size grouped by payment per registered payment",
     x = NULL,
     y = "Total patients",
     colour = "Payment decile (range)"
@@ -638,7 +835,9 @@ kable(
 
 ```
 
-```{r}
+When looking at the total list size by gender we can see that male patients have been the most impacted. Losing 1% of their numbers compared to 0.3% for women in the same time period.
+
+```{r, echo = FALSE}
 gender_long <- monthly_overall %>%
   select(Period, Male_Count, Female_Count) %>%
   pivot_longer(
@@ -653,6 +852,9 @@ gender_long_filtered <- gender_long %>%
 ggplot(gender_long_filtered, aes(x = Period, y = Count, colour = Gender)) +
   geom_line(linewidth = 1.2) +
   geom_point(size = 2) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
   labs(
     title = "Registered patients by gender over time",
     x = "Period",
@@ -686,7 +888,7 @@ kable(
 )
 ```
 
-```{r}
+```{r, echo = FALSE}
 age_long <- monthly_overall %>%
   select(
     Period,
@@ -709,11 +911,17 @@ age_long$Age_Group <- factor(
   )
 )
 
+age_long <- age_long %>%
+  filter(Period >= as.Date("2025-10-01"))
+
 ggplot(age_long, aes(x = Period, y = Count, colour = Age_Group)) +
   geom_line(linewidth = 1.2) +
   geom_point(size = 1.5) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
   labs(
-    title = "Registered patients by age group over time",
+    title = "Total list size by age group",
     x = "Period",
     y = "Number of patients",
     colour = "Age group"
@@ -745,4 +953,223 @@ kable(
   align = c("l", "r", "r", "r", "r"),
   caption = "Change in registered patients by age group (October 2025 to June 2026)"
 )
+```
+
+```{r, echo = FALSE}
+LSOA_joined <- LSOA_Patient_Reg %>%
+  left_join(LSOA_IMD, by = "LSOA_Code")
+
+IMD_trends <- LSOA_joined %>%
+  filter(!is.na(IMD_Decile)) %>%
+  group_by(IMD_Decile, Effective_Snapshot_Date.x) %>%
+  summarise(
+    Total_Patients = sum(Size, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(IMD_trends, aes(
+  x = Effective_Snapshot_Date.x,
+  y = Total_Patients,
+  colour = factor(IMD_Decile)
+)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 1.5) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
+  labs(
+    title = "Total list size by Patient LSOA IMD decile",
+    x = "Snapshot date",
+    y = "Total patients",
+    colour = "IMD decile"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+imd_change_table <- IMD_trends %>%
+  filter(Effective_Snapshot_Date.x %in% as.Date(c("2025-10-01", "2026-04-01"))) %>%
+  mutate(Period = format(Effective_Snapshot_Date.x, "%b %Y")) %>%
+  select(IMD_Decile, Period, Total_Patients) %>%
+  pivot_wider(
+    names_from = Period,
+    values_from = Total_Patients
+  ) %>%
+  mutate(
+    `Number change` = `Apr 2026` - `Oct 2025`,
+    `% change` = (`Apr 2026` - `Oct 2025`) / `Oct 2025`
+  ) %>%
+  arrange(IMD_Decile)
+
+imd_change_table <- imd_change_table %>%
+  mutate(
+    `Oct 2025` = comma(`Oct 2025`),
+    `Apr 2026` = comma(`Apr 2026`),
+    `Number change` = comma(`Number change`),
+    `% change` = percent(`% change`, accuracy = 0.01)
+  )
+
+kable(
+  imd_change_table,
+  align = c("c", "r", "r", "r", "r"),
+  caption = "Change in registered patients by IMD decile (October 2025 to April 2026)"
+)
+
+
+```
+
+```{r, echo = FALSE}
+# LSOA_trends <- LSOA_joined %>%
+#   group_by(LSOA_Code, Effective_Snapshot_Date.x) %>%
+#   summarise(
+#     Total_Patients = sum(Size, na.rm = TRUE),
+#     .groups = "drop"
+#   )
+# 
+# LSOA_change_table <- LSOA_trends %>%
+#   filter(Effective_Snapshot_Date.x %in% as.Date(c("2025-10-01", "2026-04-01"))) %>%
+#   mutate(Period = format(Effective_Snapshot_Date.x, "%b %Y")) %>%
+#   select(LSOA_Code, Period, Total_Patients) %>%
+#   pivot_wider(
+#     names_from = Period,
+#     values_from = Total_Patients
+#   ) %>%
+#   mutate(
+#     `Number change` = `Apr 2026` - `Oct 2025`,
+#     `% change` = (`Apr 2026` - `Oct 2025`) / `Oct 2025`
+#   ) %>%
+#   arrange(LSOA_Code)
+# 
+# LSOA_change_table <- LSOA_change_table %>%
+#   mutate(
+#     `Oct 2025` = comma(`Oct 2025`),
+#     `Apr 2026` = comma(`Apr 2026`),
+#     `Number change` = comma(`Number change`),
+#     `% change` = percent(`% change`, accuracy = 0.01)
+#   )
+# 
+# kable(
+#   LSOA_change_table,
+#   align = c("c", "r", "r", "r", "r"),
+#   caption = "Change in registered patients by LSOA (October 2025 to April 2026)"
+# )
+
+```
+
+```{r}
+
+LSOA_ONS_renamed <- LSOA_ONS %>%
+  rename(
+    LSOA_Code = Area_Code,
+    ONS_Population = Total_Size
+  )%>%
+  filter(!grepl("^W0", LSOA_Code))
+
+LSOA_Patient_Reg_2024 <- LSOA_Patient_Reg_2024 %>%
+  rename(
+    Registered_Patients = Total_Size
+  )
+
+LSOA_Comparison <- LSOA_Patient_Reg_2024 %>%
+  left_join(
+    LSOA_ONS_renamed,
+    by = c("LSOA_Code", "Effective_Snapshot_Date")
+  )%>%
+  filter(!grepl("^W0", LSOA_Code)) %>%
+  filter(!grepl("OTHER", LSOA_Code))
+
+
+LSOA_Comparison <- LSOA_Comparison %>%
+  mutate(
+    Difference = Registered_Patients - ONS_Population,
+    Pct_ONS_of_Registered = 100 * ONS_Population / Registered_Patients
+  )
+
+# Overall totals
+overall_totals <- LSOA_Comparison %>%
+  summarise(
+    Total_Registered = sum(Registered_Patients, na.rm = TRUE),
+    Total_ONS = sum(ONS_Population, na.rm = TRUE),
+    Total_Difference = Total_Registered - Total_ONS,
+    Pct_ONS_of_Registered = 100 * Total_ONS / Total_Registered
+  )
+
+overall_totals
+
+#removed OTHER LSOA reg and those REG in wales which is X number 
+
+
+```
+
+```{r}
+
+LSOA_ONS_renamed_sex <- LSOA_ONS_SEX %>%
+  rename(
+    LSOA_Code = Area_Code,
+    ONS_Population = Total_Size
+  ) %>%
+  filter(!grepl("^W0", LSOA_Code))
+
+LSOA_Patient_Reg_2024_Sex <- LSOA_Patient_Reg_2024_Sex %>%
+  rename(
+    Registered_Patients = Total_Size
+  ) %>%
+  mutate(
+    Sex = recode(
+      Sex,
+      "FEMALE" = "Female",
+      "MALE" = "Male"
+    )
+  )
+
+LSOA_Comparison_Sex <- LSOA_Patient_Reg_2024_Sex %>%
+  left_join(
+    LSOA_ONS_renamed_sex,
+    by = c("LSOA_Code", "Effective_Snapshot_Date", "Sex")
+  ) %>%
+  filter(
+    !grepl("^W0", LSOA_Code),
+    !grepl("OTHER", LSOA_Code)
+  ) %>%
+  mutate(
+    Difference = Registered_Patients - ONS_Population,
+    Pct_ONS_of_Registered = 100 * ONS_Population / Registered_Patients
+  )
+
+# Totals by sex
+overall_totals_Sex <- LSOA_Comparison_Sex %>%
+  group_by(Sex) %>%
+  summarise(
+    Total_Registered = sum(Registered_Patients, na.rm = TRUE),
+    Total_ONS = sum(ONS_Population, na.rm = TRUE),
+    Total_Difference = Total_Registered - Total_ONS,
+    Pct_ONS_of_Registered = 100 * Total_ONS / Total_Registered,
+    .groups = "drop"
+  )
+
+overall_totals_Sex
+
+```
+
+```{r}
+library(sf)
+LSOA_shp <- sf::st_read("LSOA_2021_Boundaries.gpkg")
+
+LSOA_map <- LSOA_shp %>%
+  left_join(
+    LSOA_Comparison,
+    by = c("LSOA21CD" = "LSOA_Code")
+  )
+
+
+ggplot(LSOA_map) +
+  geom_sf(aes(fill = Pct_ONS_of_Registered), colour = NA) +
+  scale_fill_gradient2(
+    low = "firebrick",
+    mid = "white",
+    high = "steelblue",
+    midpoint = 100,
+    name = "% ONS /\nRegistered",
+    na.value = "grey90"
+  ) +
+  theme_void()
 ```

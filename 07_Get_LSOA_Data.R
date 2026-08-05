@@ -1,7 +1,11 @@
 query <- "
-SELECT *
+SELECT
+    Effective_Snapshot_Date,
+    SUM(Size) AS Total_Size
 FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
-WHERE Effective_Snapshot_Date >= '2025-10-01'
+WHERE Effective_Snapshot_Date = '2024-07-01'
+GROUP BY
+    Effective_Snapshot_Date
 "
 
 LSOA_Patient_Reg <- DBI::dbGetQuery(con, query)
@@ -31,6 +35,23 @@ ORDER BY
 "
 
 LSOA_ONS <- DBI::dbGetQuery(con, query3)
+
+
+query_ons_all_year <- "
+SELECT
+    Effective_Snapshot_Date,
+    SUM(Size) AS Total_Size
+FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
+WHERE Effective_Snapshot_Date >= '2013-07-01'
+  AND Area_Code NOT LIKE 'W0%'
+  AND Area_Code <> 'OTHER'
+GROUP BY
+    Effective_Snapshot_Date
+ORDER BY
+    Effective_Snapshot_Date
+"
+
+LSOA_ONS_all_year <- DBI::dbGetQuery(con, query_ons_all_year)
 
 
 query4 <- "
@@ -67,7 +88,7 @@ SELECT
     END AS Age_Band,
     SUM(Size) AS Total_Size
 FROM Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1
-WHERE Effective_Snapshot_Date = '2024-07-01'
+WHERE Effective_Snapshot_Date >= '2015-07-01'
   AND Sex IN ('FEMALE', 'MALE')
 GROUP BY
     Effective_Snapshot_Date,
@@ -85,7 +106,7 @@ GROUP BY
     END
 "
 
-LSOA_Patient_Reg_age_2024 <- DBI::dbGetQuery(con, query_age)
+LSOA_Patient_Reg_age_2024_all <- DBI::dbGetQuery(con, query_age)
 
 
 query5 <- "
@@ -95,7 +116,7 @@ SELECT
     Sex,
     SUM(Size) AS Total_Size
 FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
-WHERE Effective_Snapshot_Date >= '2024-07-01'
+WHERE Effective_Snapshot_Date >= '2015-07-01'
 GROUP BY
     Area_Code,
     Effective_Snapshot_Date,
@@ -116,7 +137,7 @@ SELECT
     Sex,
     SUM(Size) AS Total_Size
 FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
-WHERE Effective_Snapshot_Date = '2024-07-01'
+WHERE Effective_Snapshot_Date >= '2015-07-01'
 GROUP BY
     LSOA_Code,
     Effective_Snapshot_Date,
@@ -127,7 +148,7 @@ ORDER BY
     Sex
 "
 
-LSOA_Patient_Reg_2024_Sex <- DBI::dbGetQuery(con, query7)
+LSOA_Patient_Reg_2024_Sex_all <- DBI::dbGetQuery(con, query7)
 
 
 query8 <- "
@@ -137,7 +158,7 @@ SELECT
     Age,
     SUM(Size) AS Total_Size
 FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
-WHERE Effective_Snapshot_Date = '2024-07-01'
+WHERE Effective_Snapshot_Date >= '2015-07-01'
 GROUP BY
     Area_Code,
     Effective_Snapshot_Date,
@@ -168,7 +189,7 @@ SELECT
     END AS Age_Band,
     SUM(Size) AS Total_Size
 FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
-WHERE Effective_Snapshot_Date = '2024-07-01'
+WHERE Effective_Snapshot_Date >= '2015-07-01'
   AND Area_Code NOT LIKE 'W0%'
   AND Area_Code <> 'OTHER'
 GROUP BY
@@ -209,7 +230,7 @@ SELECT
     END AS Age_Band,
     SUM(Size) AS Total_Size
 FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
-WHERE Effective_Snapshot_Date = '2024-07-01'
+WHERE Effective_Snapshot_Date >= '2015-07-01'
   AND Area_Code NOT LIKE 'W0%'
   AND Area_Code <> 'OTHER'
   AND Sex IN ('MALE', 'FEMALE')
@@ -254,7 +275,7 @@ SELECT
     END AS Age_Band,
     SUM(Size) AS Total_Size
 FROM Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1
-WHERE Effective_Snapshot_Date = '2024-07-01'
+WHERE Effective_Snapshot_Date >= '2015-07-01'
   AND Sex IN ('FEMALE', 'MALE')
 GROUP BY
     Effective_Snapshot_Date,
@@ -276,4 +297,4 @@ GROUP BY
     END
 "
 
-LSOA_Patient_Reg_age_sex_2024 <- DBI::dbGetQuery(con, query_age_sex)
+LSOA_Patient_Reg_age_sex_2024_all <- DBI::dbGetQuery(con, query_age_sex)

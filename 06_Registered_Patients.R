@@ -181,7 +181,7 @@ monthly_overall <- get_gp_stats(
   con,
   period = "monthly",
   level = "overall",
-  start_date = "2023-06-01",
+  start_date = "2013-01-01",
   output_type = "counts"
   #,end_date = "2024-12-31"
 )
@@ -191,7 +191,7 @@ monthly_practice <- get_gp_stats(
   con,
   period = "monthly",
   level = "practice",
-  start_date = "2025-10-01",
+  start_date = "2013-01-01",
   output_type = "counts"
   #,end_date = "2024-12-31"
 )

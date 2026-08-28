@@ -1,0 +1,703 @@
+---
+title: "Registered patients compared with ONS population estimates"
+subtitle: "Focused national and LSOA-level analysis"
+output:
+  word_document: default
+  html_document:
+    toc: true
+    toc_float: true
+params:
+  start_date: "2015-07-01"
+  end_date: "2026-08-31"
+  snapshot_date: "2024-07-01"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 5.5,
+  dpi = 150
+)
+
+required_packages <- c(
+  "DBI", "odbc", "dplyr", "tidyr", "ggplot2", "scales",
+  "knitr", "httr", "jsonlite", "readr", "glue", "rlang", "tibble"
+)
+
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+
+if (length(missing_packages) > 0) {
+  stop(
+    "Install the following R packages before rendering: ",
+    paste(missing_packages, collapse = ", ")
+  )
+}
+
+library(DBI)
+library(odbc)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+library(knitr)
+
+start_date <- as.Date(params$start_date)
+end_date <- as.Date(params$end_date)
+snapshot_date <- as.Date(params$snapshot_date)
+
+stopifnot(
+  !is.na(start_date),
+  !is.na(end_date),
+  !is.na(snapshot_date),
+  start_date <= end_date
+)
+
+pct_difference <- function(registered, ons) {
+  ifelse(
+    is.na(ons) | ons == 0,
+    NA_real_,
+    100 * (registered - ons) / ons
+  )
+}
+
+comparison_bar <- function(data, category, title, subtitle, y_title = NULL) {
+  category_quo <- rlang::enquo(category)
+
+  ggplot(
+    data,
+    aes(
+      x = Pct_Difference,
+      y = !!category_quo,
+      fill = Pct_Difference
+    )
+  ) +
+    geom_vline(xintercept = 0, colour = "grey55", linewidth = 0.5) +
+    geom_col(width = 0.7) +
+    geom_text(
+      aes(label = sprintf("%.1f%%", Pct_Difference)),
+      hjust = ifelse(data$Pct_Difference >= 0, -0.12, 1.12),
+      size = 3.7
+    ) +
+    scale_x_continuous(
+      labels = function(x) paste0(x, "%"),
+      expand = expansion(mult = c(0.16, 0.18))
+    ) +
+    scale_fill_gradient2(
+      low = "#B2182B",
+      mid = "#F2F2F2",
+      high = "#2166AC",
+      midpoint = 0,
+      guide = "none"
+    ) +
+    coord_cartesian(clip = "off") +
+    labs(
+      title = title,
+      subtitle = subtitle,
+      x = "Percentage difference from ONS",
+      y = y_title,
+      caption = "Percentage difference = (registered patients − ONS estimate) / ONS estimate × 100."
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      panel.grid.major.y = element_blank(),
+      panel.grid.minor = element_blank(),
+      plot.margin = margin(5.5, 30, 5.5, 5.5)
+    )
+}
+```
+
+# Scope and interpretation
+
+This report compares GP registered-patient counts with ONS population estimates for England. All snapshot charts use `r format(snapshot_date, "%B %Y")` and report the percentage difference relative to ONS:
+
+\[
+100 \times \frac{\text{registered patients} - \text{ONS population}}{\text{ONS population}}
+\]
+
+Positive values indicate that registered-patient counts exceed ONS estimates. Negative values indicate that registered-patient counts are lower. Sex-specific charts include female and male records only. The NHS-region lookup represents boundaries as at April 2026.
+
+```{r connect-and-load-data, include=FALSE}
+db_uid <- Sys.getenv("FAD_DB_UID")
+db_pwd <- Sys.getenv("FAD_DB_PWD")
+
+if (!nzchar(db_uid) || !nzchar(db_pwd)) {
+  stop(
+    "Database credentials are not configured. Set FAD_DB_UID and ",
+    "FAD_DB_PWD in a local .Renviron file, restart R, and render again."
+  )
+}
+
+con <- DBI::dbConnect(
+  odbc::odbc(),
+  Driver = "ODBC Driver 17 for SQL Server",
+  Server = Sys.getenv(
+    "FAD_DB_SERVER",
+    unset = "factsanddimensions.database.windows.net"
+  ),
+  Database = Sys.getenv(
+    "FAD_DB_NAME",
+    unset = "Health_Foundation_UserDB"
+  ),
+  UID = db_uid,
+  PWD = db_pwd,
+  Encrypt = "yes"
+)
+
+date_sql <- function(x) format(as.Date(x), "%Y-%m-%d")
+
+start_sql <- date_sql(start_date)
+end_sql <- date_sql(end_date)
+snapshot_sql <- date_sql(snapshot_date)
+
+national_registered <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      Effective_Snapshot_Date AS Period,
+      SUM(Size) AS Population
+    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
+    WHERE Effective_Snapshot_Date >= '{start_sql}'
+      AND Effective_Snapshot_Date <= '{end_sql}'
+      AND LSOA_Code LIKE 'E01%'
+    GROUP BY Effective_Snapshot_Date
+    ORDER BY Effective_Snapshot_Date
+  ")
+) %>%
+  mutate(
+    Period = as.Date(Period),
+    Source = "Registered patients"
+  )
+
+national_ons <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      Effective_Snapshot_Date AS Period,
+      SUM(Size) AS Population
+    FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
+    WHERE Effective_Snapshot_Date >= '{start_sql}'
+      AND Effective_Snapshot_Date <= '{end_sql}'
+      AND Area_Code LIKE 'E01%'
+    GROUP BY Effective_Snapshot_Date
+    ORDER BY Effective_Snapshot_Date
+  ")
+) %>%
+  mutate(
+    Period = as.Date(Period),
+    Source = "ONS population estimate"
+  )
+
+lsoa_registered_snapshot <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      LSOA_Code,
+      SUM(Size) AS Registered
+    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
+    WHERE Effective_Snapshot_Date = '{snapshot_sql}'
+      AND LSOA_Code LIKE 'E01%'
+    GROUP BY LSOA_Code
+  ")
+)
+
+lsoa_ons_snapshot <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      Area_Code AS LSOA_Code,
+      SUM(Size) AS ONS
+    FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
+    WHERE Effective_Snapshot_Date = '{snapshot_sql}'
+      AND Area_Code LIKE 'E01%'
+    GROUP BY Area_Code
+  ")
+)
+
+age_case <- "
+  CASE
+    WHEN Age = '95+' THEN '90+'
+    WHEN TRY_CAST(Age AS INT) BETWEEN 0 AND 9 THEN '0-9'
+    WHEN TRY_CAST(Age AS INT) BETWEEN 10 AND 19 THEN '10-19'
+    WHEN TRY_CAST(Age AS INT) BETWEEN 20 AND 29 THEN '20-29'
+    WHEN TRY_CAST(Age AS INT) BETWEEN 30 AND 39 THEN '30-39'
+    WHEN TRY_CAST(Age AS INT) BETWEEN 40 AND 49 THEN '40-49'
+    WHEN TRY_CAST(Age AS INT) BETWEEN 50 AND 59 THEN '50-59'
+    WHEN TRY_CAST(Age AS INT) BETWEEN 60 AND 69 THEN '60-69'
+    WHEN TRY_CAST(Age AS INT) BETWEEN 70 AND 79 THEN '70-79'
+    WHEN TRY_CAST(Age AS INT) BETWEEN 80 AND 89 THEN '80-89'
+    WHEN TRY_CAST(Age AS INT) >= 90 THEN '90+'
+    ELSE NULL
+  END
+"
+
+registered_demographic_snapshot <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      CASE
+        WHEN UPPER(Sex) = 'FEMALE' THEN 'Female'
+        WHEN UPPER(Sex) = 'MALE' THEN 'Male'
+      END AS Sex,
+      {age_case} AS Age_Band,
+      SUM(Size) AS Registered
+    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
+    WHERE Effective_Snapshot_Date = '{snapshot_sql}'
+      AND LSOA_Code LIKE 'E01%'
+      AND UPPER(Sex) IN ('FEMALE', 'MALE')
+    GROUP BY
+      CASE
+        WHEN UPPER(Sex) = 'FEMALE' THEN 'Female'
+        WHEN UPPER(Sex) = 'MALE' THEN 'Male'
+      END,
+      {age_case}
+  ")
+) %>%
+  filter(!is.na(Age_Band), !is.na(Sex))
+
+ons_demographic_snapshot <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      CASE
+        WHEN UPPER(Sex) = 'FEMALE' THEN 'Female'
+        WHEN UPPER(Sex) = 'MALE' THEN 'Male'
+      END AS Sex,
+      {age_case} AS Age_Band,
+      SUM(Size) AS ONS
+    FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
+    WHERE Effective_Snapshot_Date = '{snapshot_sql}'
+      AND Area_Code LIKE 'E01%'
+      AND UPPER(Sex) IN ('FEMALE', 'MALE')
+    GROUP BY
+      CASE
+        WHEN UPPER(Sex) = 'FEMALE' THEN 'Female'
+        WHEN UPPER(Sex) = 'MALE' THEN 'Male'
+      END,
+      {age_case}
+  ")
+) %>%
+  filter(!is.na(Age_Band), !is.na(Sex))
+
+imd_lookup <- DBI::dbGetQuery(
+  con,
+  "
+    SELECT
+      LSOA_Code,
+      MAX(IMD_Decile) AS IMD_Decile
+    FROM Demography.Index_Of_Multiple_Deprivation_By_LSOA1
+    WHERE Effective_Snapshot_Date = (
+      SELECT MAX(Effective_Snapshot_Date)
+      FROM Demography.Index_Of_Multiple_Deprivation_By_LSOA1
+    )
+      AND LSOA_Code LIKE 'E01%'
+    GROUP BY LSOA_Code
+  "
+)
+
+DBI::dbDisconnect(con)
+
+national_time_series <- bind_rows(
+  national_registered,
+  national_ons
+)
+
+lsoa_snapshot <- full_join(
+  lsoa_registered_snapshot,
+  lsoa_ons_snapshot,
+  by = "LSOA_Code"
+) %>%
+  mutate(
+    Registered = replace_na(Registered, 0),
+    ONS = replace_na(ONS, 0),
+    Pct_Difference = pct_difference(Registered, ONS)
+  )
+
+demographic_snapshot <- full_join(
+  registered_demographic_snapshot,
+  ons_demographic_snapshot,
+  by = c("Sex", "Age_Band")
+) %>%
+  mutate(
+    Registered = replace_na(Registered, 0),
+    ONS = replace_na(ONS, 0),
+    Pct_Difference = pct_difference(Registered, ONS)
+  )
+
+age_levels <- c(
+  "0-9", "10-19", "20-29", "30-39", "40-49",
+  "50-59", "60-69", "70-79", "80-89", "90+"
+)
+
+demographic_snapshot <- demographic_snapshot %>%
+  mutate(
+    Age_Band = factor(Age_Band, levels = age_levels),
+    Sex = factor(Sex, levels = c("Female", "Male"))
+  )
+```
+
+```{r load-nhs-region-lookup, include=FALSE}
+nhser_cache <- "LSOA21_to_NHSER26.csv"
+
+fetch_nhser_lookup <- function() {
+  endpoint <- paste0(
+    "https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/",
+    "LSOA21_SICBL26_ICB26_NHSER26_LAD26/FeatureServer/0/query"
+  )
+
+  pages <- list()
+  offset <- 0L
+  page_size <- 2000L
+
+  repeat {
+    response <- httr::GET(
+      endpoint,
+      query = list(
+        where = "1=1",
+        outFields = "LSOA21CD,NHSER26CD,NHSER26NM",
+        returnGeometry = "false",
+        resultOffset = offset,
+        resultRecordCount = page_size,
+        orderByFields = "ObjectId",
+        f = "json"
+      )
+    )
+
+    httr::stop_for_status(response)
+
+    payload <- jsonlite::fromJSON(
+      httr::content(response, as = "text", encoding = "UTF-8"),
+      simplifyDataFrame = TRUE
+    )
+
+    if (!is.null(payload$error)) {
+      stop("ONS ArcGIS lookup failed: ", payload$error$message)
+    }
+
+    page <- payload$features$attributes
+
+    if (is.null(page) || nrow(page) == 0) {
+      break
+    }
+
+    pages[[length(pages) + 1L]] <- page
+
+    if (!isTRUE(payload$exceededTransferLimit)) {
+      break
+    }
+
+    offset <- offset + nrow(page)
+  }
+
+  bind_rows(pages) %>%
+    distinct(LSOA21CD, .keep_all = TRUE)
+}
+
+if (file.exists(nhser_cache)) {
+  nhser_lookup <- readr::read_csv(
+    nhser_cache,
+    show_col_types = FALSE,
+    col_types = readr::cols(.default = readr::col_character())
+  )
+} else {
+  nhser_lookup <- fetch_nhser_lookup()
+  readr::write_csv(nhser_lookup, nhser_cache)
+}
+```
+
+# National total over time
+
+```{r national-time-series}
+ggplot(
+  national_time_series,
+  aes(
+    x = Period,
+    y = Population,
+    colour = Source,
+    group = Source
+  )
+) +
+  geom_line(linewidth = 1.15) +
+  geom_point(
+    data = national_time_series %>%
+      filter(Source == "ONS population estimate"),
+    size = 2.2
+  ) +
+  scale_colour_manual(
+    values = c(
+      "Registered patients" = "#2166AC",
+      "ONS population estimate" = "#B2182B"
+    )
+  ) +
+  scale_x_date(
+    limits = c(start_date, end_date),
+    date_breaks = "1 year",
+    date_labels = "%b\n%Y",
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1e-6, suffix = "m")
+  ) +
+  labs(
+    title = "England population: registered patients and ONS estimates",
+    subtitle = paste0(
+      format(start_date, "%B %Y"), " to ",
+      format(end_date, "%B %Y"), "; available snapshots"
+    ),
+    x = NULL,
+    y = "Population",
+    colour = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+```{r latest-data-table}
+latest_dates <- national_time_series %>%
+  group_by(Source) %>%
+  summarise(
+    `Latest available snapshot` = max(Period, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+knitr::kable(
+  latest_dates,
+  caption = "Latest available source dates within the requested period"
+)
+```
+
+# National snapshot
+
+```{r national-snapshot}
+national_snapshot <- lsoa_snapshot %>%
+  summarise(
+    Registered = sum(Registered, na.rm = TRUE),
+    ONS = sum(ONS, na.rm = TRUE)
+  ) %>%
+  mutate(
+    Geography = "England",
+    Pct_Difference = pct_difference(Registered, ONS)
+  )
+
+comparison_bar(
+  national_snapshot,
+  Geography,
+  title = "National difference between registered patients and ONS estimate",
+  subtitle = format(snapshot_date, "%B %Y"),
+  y_title = NULL
+)
+```
+
+```{r national-snapshot-table}
+national_snapshot %>%
+  transmute(
+    Geography,
+    `Registered patients` = scales::comma(Registered),
+    `ONS population` = scales::comma(ONS),
+    `Difference` = scales::comma(Registered - ONS),
+    `Percentage difference from ONS` = sprintf("%.1f%%", Pct_Difference)
+  ) %>%
+  knitr::kable(
+    caption = paste("National comparison:", format(snapshot_date, "%B %Y"))
+  )
+```
+
+# Difference by age and sex
+
+```{r age-sex-bars, fig.height=6}
+ggplot(
+  demographic_snapshot,
+  aes(
+    x = Age_Band,
+    y = Pct_Difference,
+    fill = Sex
+  )
+) +
+  geom_hline(yintercept = 0, colour = "grey55", linewidth = 0.5) +
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  geom_text(
+    aes(label = sprintf("%.1f%%", Pct_Difference)),
+    position = position_dodge(width = 0.8),
+    vjust = ifelse(demographic_snapshot$Pct_Difference >= 0, -0.25, 1.15),
+    size = 3,
+    angle = 90
+  ) +
+  scale_fill_manual(
+    values = c("Female" = "#CC79A7", "Male" = "#0072B2")
+  ) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = expansion(mult = c(0.12, 0.18))
+  ) +
+  labs(
+    title = "Difference from ONS by age and sex",
+    subtitle = format(snapshot_date, "%B %Y"),
+    x = "Age band",
+    y = "Percentage difference from ONS",
+    fill = "Sex",
+    caption = "Female and male records only."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+# Difference by age
+
+```{r age-bars, fig.height=6}
+age_snapshot <- demographic_snapshot %>%
+  group_by(Age_Band) %>%
+  summarise(
+    Registered = sum(Registered, na.rm = TRUE),
+    ONS = sum(ONS, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(Pct_Difference = pct_difference(Registered, ONS))
+
+comparison_bar(
+  age_snapshot,
+  Age_Band,
+  title = "Difference from ONS by age",
+  subtitle = format(snapshot_date, "%B %Y"),
+  y_title = "Age band"
+)
+```
+
+# Difference by sex
+
+```{r sex-bars}
+sex_snapshot <- demographic_snapshot %>%
+  group_by(Sex) %>%
+  summarise(
+    Registered = sum(Registered, na.rm = TRUE),
+    ONS = sum(ONS, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(Pct_Difference = pct_difference(Registered, ONS))
+
+comparison_bar(
+  sex_snapshot,
+  Sex,
+  title = "Difference from ONS by sex",
+  subtitle = format(snapshot_date, "%B %Y"),
+  y_title = "Sex"
+)
+```
+
+# Difference by LSOA-level IMD decile
+
+```{r imd-bars, fig.height=6}
+imd_snapshot <- lsoa_snapshot %>%
+  inner_join(
+    imd_lookup %>%
+      mutate(IMD_Decile = as.integer(IMD_Decile)),
+    by = "LSOA_Code"
+  ) %>%
+  filter(IMD_Decile %in% 1:10) %>%
+  group_by(IMD_Decile) %>%
+  summarise(
+    Registered = sum(Registered, na.rm = TRUE),
+    ONS = sum(ONS, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Pct_Difference = pct_difference(Registered, ONS),
+    IMD_Label = factor(
+      IMD_Decile,
+      levels = 10:1,
+      labels = c(
+        "10 (Least deprived)", "9", "8", "7", "6",
+        "5", "4", "3", "2", "1 (Most deprived)"
+      )
+    )
+  )
+
+comparison_bar(
+  imd_snapshot,
+  IMD_Label,
+  title = "Difference from ONS by LSOA-level IMD decile",
+  subtitle = paste(
+    format(snapshot_date, "%B %Y"),
+    "using the latest available LSOA IMD lookup"
+  ),
+  y_title = "IMD decile"
+)
+```
+
+# Difference by NHS England region
+
+```{r nhs-region-bars, fig.height=6}
+region_snapshot <- lsoa_snapshot %>%
+  inner_join(
+    nhser_lookup %>%
+      select(LSOA21CD, NHSER26NM),
+    by = c("LSOA_Code" = "LSOA21CD")
+  ) %>%
+  filter(!is.na(NHSER26NM)) %>%
+  group_by(NHSER26NM) %>%
+  summarise(
+    Registered = sum(Registered, na.rm = TRUE),
+    ONS = sum(ONS, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Pct_Difference = pct_difference(Registered, ONS),
+    NHSER26NM = reorder(NHSER26NM, Pct_Difference)
+  )
+
+comparison_bar(
+  region_snapshot,
+  NHSER26NM,
+  title = "Difference from ONS by NHS England region",
+  subtitle = paste0(
+    format(snapshot_date, "%B %Y"),
+    "; LSOA mapped to April 2026 NHS regions"
+  ),
+  y_title = "NHS England region"
+)
+```
+
+```{r lookup-coverage}
+coverage <- tibble::tibble(
+  Lookup = c("LSOA IMD decile", "NHS England region"),
+  `Mapped registered population` = c(
+    sum(imd_snapshot$Registered, na.rm = TRUE),
+    sum(region_snapshot$Registered, na.rm = TRUE)
+  ),
+  `National registered population` = national_snapshot$Registered
+) %>%
+  mutate(
+    `Mapping coverage` = scales::percent(
+      `Mapped registered population` / `National registered population`,
+      accuracy = 0.1
+    ),
+    `Mapped registered population` = scales::comma(`Mapped registered population`),
+    `National registered population` = scales::comma(`National registered population`)
+  )
+
+knitr::kable(
+  coverage,
+  caption = "LSOA lookup coverage for the snapshot analyses"
+)
+```
+
+## Data sources
+
+- GP registered-patient data: `Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1`.
+- ONS population estimates: `Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1`.
+- LSOA IMD: latest snapshot in `Demography.Index_Of_Multiple_Deprivation_By_LSOA1`.
+- LSOA-to-NHS-region mapping: ONS, *LSOA (2021) to SICBL to ICB to NHSER to LAD (April 2026) Lookup in England*.

@@ -474,7 +474,7 @@ comparison_bar(
 
 # Qualified GP workforce
 
-These charts use practice-level GP workforce FTE and exclude GP training grades F1/F2 and ST1–ST4. The `Total` record is also excluded to prevent double-counting the detailed roles.
+These charts use practice-level GP workforce FTE and exclude GP training grades F1/F2 and ST1–ST4. Qualified GP FTE is calculated from the GP `Total` minus training-grade FTE, preserving the earlier history where detailed non-training roles are not consistently populated.
 
 ```{r workforce-prepare, include=FALSE}
 workforce_region_trends <- qualified_gp_workforce %>%
@@ -505,7 +505,11 @@ ggplot(
     date_labels = "%b\n%Y",
     expand = expansion(mult = c(0.01, 0.01))
   ) +
-  scale_y_continuous(labels = scales::label_comma()) +
+  scale_y_continuous(
+    labels = scales::label_comma(),
+    limits = c(0, NA),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
   labs(
     title = "Qualified GP workforce FTE in England",
     subtitle = "Practice-level data; GP training grades F1/F2 and ST1–ST4 excluded",
@@ -535,7 +539,11 @@ ggplot(
     date_labels = "%Y",
     expand = expansion(mult = c(0.01, 0.01))
   ) +
-  scale_y_continuous(labels = scales::label_comma()) +
+  scale_y_continuous(
+    labels = scales::label_comma(),
+    limits = c(0, NA),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
   labs(
     title = "Qualified GP workforce FTE by NHS England region",
     subtitle = "Practice-mapped data; GP training grades F1/F2 and ST1–ST4 excluded",

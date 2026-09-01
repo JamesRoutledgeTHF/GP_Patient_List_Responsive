@@ -472,33 +472,104 @@ comparison_bar(
 )
 ```
 
-# Qualified GP workforce
+# Patients per qualified GP FTE
 
-These charts use the practice-level `TOTAL_GP_EXTG_FTE` workforce measure, which provides the longer historical series for GP FTE excluding training grades.
+These charts divide the registered-patient and ONS population estimates by the practice-level `TOTAL_GP_EXTG_FTE` measure. The result is patients per qualified GP full-time equivalent, rather than patients per individual GP.
 
-```{r workforce-prepare, include=FALSE}
+```{r patients-per-gp-prepare, include=FALSE}
 workforce_region_trends <- qualified_gp_workforce %>%
+  mutate(Month = as.Date(format(Period, "%Y-%m-01"))) %>%
   inner_join(practice_region_lookup, by = "Practice_Code") %>%
-  group_by(NHS_Region, Period) %>%
+  group_by(NHS_Region, Month) %>%
   summarise(
     GP_FTE = sum(GP_FTE, na.rm = TRUE),
     .groups = "drop"
   )
 
 workforce_national_trends <- qualified_gp_workforce %>%
-  group_by(Period) %>%
+  mutate(Month = as.Date(format(Period, "%Y-%m-01"))) %>%
+  group_by(Month) %>%
   summarise(
     GP_FTE = sum(GP_FTE, na.rm = TRUE),
     .groups = "drop"
   )
+
+national_patients_per_gp <- national_time_series %>%
+  mutate(Month = as.Date(format(Period, "%Y-%m-01"))) %>%
+  left_join(workforce_national_trends, by = "Month") %>%
+  filter(!is.na(GP_FTE), GP_FTE > 0) %>%
+  mutate(Patients_Per_GP = Population / GP_FTE)
+
+national_patients_per_gp_gap <- national_patients_per_gp %>%
+  select(Month, Source, Patients_Per_GP) %>%
+  pivot_wider(
+    names_from = Source,
+    values_from = Patients_Per_GP
+  ) %>%
+  filter(
+    !is.na(`Registered patients`),
+    !is.na(`ONS population estimate`)
+  ) %>%
+  mutate(
+    Gap = `Registered patients` - `ONS population estimate`
+  )
+
+snapshot_month <- as.Date(format(snapshot_date, "%Y-%m-01"))
+
+workforce_snapshot_month <- workforce_region_trends %>%
+  distinct(Month) %>%
+  mutate(
+    Distance_From_Snapshot = abs(as.numeric(Month - snapshot_month))
+  ) %>%
+  slice_min(
+    Distance_From_Snapshot,
+    n = 1,
+    with_ties = FALSE
+  ) %>%
+  pull(Month)
+
+regional_patients_per_gp <- practice_region_snapshot %>%
+  transmute(
+    NHS_Region = as.character(NHS_Region),
+    Registered,
+    ONS
+  ) %>%
+  left_join(
+    workforce_region_trends %>%
+      filter(Month == workforce_snapshot_month) %>%
+      select(NHS_Region, GP_FTE),
+    by = "NHS_Region"
+  ) %>%
+  filter(!is.na(GP_FTE), GP_FTE > 0) %>%
+  mutate(
+    Registered_Patients_Per_GP = Registered / GP_FTE,
+    ONS_Patients_Per_GP = ONS / GP_FTE,
+    Gap = Registered_Patients_Per_GP - ONS_Patients_Per_GP
+  )
 ```
 
-```{r workforce-national-time-series}
+```{r patients-per-gp-national-time-series}
 ggplot(
-  workforce_national_trends,
-  aes(x = Period, y = GP_FTE)
+  national_patients_per_gp,
+  aes(
+    x = Month,
+    y = Patients_Per_GP,
+    colour = Source,
+    group = Source
+  )
 ) +
-  geom_line(linewidth = 1.15, colour = "#2166AC") +
+  geom_line(linewidth = 1.1) +
+  geom_point(
+    data = national_patients_per_gp %>%
+      filter(Source == "ONS population estimate"),
+    size = 2.1
+  ) +
+  scale_colour_manual(
+    values = c(
+      "Registered patients" = "#2166AC",
+      "ONS population estimate" = "#B2182B"
+    )
+  ) +
   scale_x_date(
     limits = c(start_date, end_date),
     date_breaks = "1 year",
@@ -511,10 +582,40 @@ ggplot(
     expand = expansion(mult = c(0, 0.05))
   ) +
   labs(
-    title = "Qualified GP workforce FTE in England",
-    subtitle = "Practice-level TOTAL_GP_EXTG_FTE measure",
+    title = "Patients per qualified GP FTE in England",
+    subtitle = "Registered-patient counts and available ONS population estimates",
     x = NULL,
-    y = "GP full-time equivalent"
+    y = "Patients per qualified GP FTE",
+    colour = "Population source"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+```{r patients-per-gp-national-gap}
+ggplot(
+  national_patients_per_gp_gap,
+  aes(x = Month, y = Gap)
+) +
+  geom_hline(yintercept = 0, colour = "grey55", linewidth = 0.5) +
+  geom_line(linewidth = 1.1, colour = "#6A3D9A") +
+  geom_point(size = 2.2, colour = "#6A3D9A") +
+  scale_x_date(
+    limits = c(start_date, end_date),
+    date_breaks = "1 year",
+    date_labels = "%b\n%Y",
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  labs(
+    title = "National gap in patients per qualified GP FTE",
+    subtitle = "Registered-patient rate minus the ONS population rate; available matched months",
+    x = NULL,
+    y = "Additional registered patients per GP FTE"
   ) +
   theme_minimal(base_size = 12) +
   theme(
@@ -523,74 +624,87 @@ ggplot(
   )
 ```
 
-```{r workforce-region-time-series, fig.height=6}
+```{r patients-per-gp-region-comparison, fig.height=6}
+regional_patients_per_gp_long <- regional_patients_per_gp %>%
+  select(
+    NHS_Region,
+    `Registered patients` = Registered_Patients_Per_GP,
+    `ONS population estimate` = ONS_Patients_Per_GP
+  ) %>%
+  pivot_longer(
+    cols = c(`Registered patients`, `ONS population estimate`),
+    names_to = "Population_Source",
+    values_to = "Patients_Per_GP"
+  )
+
 ggplot(
-  workforce_region_trends,
+  regional_patients_per_gp_long,
   aes(
-    x = Period,
-    y = GP_FTE,
-    colour = NHS_Region
+    x = NHS_Region,
+    y = Patients_Per_GP,
+    fill = Population_Source
   )
 ) +
-  geom_line(linewidth = 1) +
-  scale_x_date(
-    limits = c(start_date, end_date),
-    date_breaks = "1 year",
-    date_labels = "%Y",
-    expand = expansion(mult = c(0.01, 0.01))
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Registered patients" = "#2166AC",
+      "ONS population estimate" = "#B2182B"
+    )
   ) +
   scale_y_continuous(
     labels = scales::label_comma(),
     limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.05))
+    expand = expansion(mult = c(0, 0.08))
   ) +
   labs(
-    title = "Qualified GP workforce FTE by NHS England region",
-    subtitle = "Practice-mapped TOTAL_GP_EXTG_FTE measure",
-    x = NULL,
-    y = "GP full-time equivalent",
-    colour = "NHS England region"
+    title = "Patients per qualified GP FTE by NHS England region",
+    subtitle = paste0(
+      "Population snapshot: ", format(snapshot_date, "%B %Y"),
+      "; workforce month: ", format(workforce_snapshot_month, "%B %Y")
+    ),
+    x = "NHS England region",
+    y = "Patients per qualified GP FTE",
+    fill = "Population source"
   ) +
   theme_minimal(base_size = 12) +
   theme(
-    legend.position = "right",
+    legend.position = "top",
     panel.grid.minor = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1)
+    axis.text.x = element_text(angle = 35, hjust = 1)
   )
 ```
 
-```{r workforce-region-latest, fig.height=6}
-latest_workforce_period <- max(
-  workforce_region_trends$Period,
-  na.rm = TRUE
-)
-
-latest_workforce_region <- workforce_region_trends %>%
-  filter(Period == latest_workforce_period) %>%
-  mutate(NHS_Region = reorder(NHS_Region, GP_FTE))
+```{r patients-per-gp-region-gap, fig.height=6}
+regional_patients_per_gp <- regional_patients_per_gp %>%
+  mutate(NHS_Region = reorder(NHS_Region, Gap))
 
 ggplot(
-  latest_workforce_region,
-  aes(x = GP_FTE, y = NHS_Region)
+  regional_patients_per_gp,
+  aes(x = Gap, y = NHS_Region)
 ) +
-  geom_col(fill = "#2166AC", width = 0.7) +
+  geom_vline(xintercept = 0, colour = "grey55", linewidth = 0.5) +
+  geom_col(fill = "#6A3D9A", width = 0.7) +
   geom_text(
-    aes(label = scales::comma(GP_FTE, accuracy = 1)),
-    hjust = -0.12,
+    aes(label = scales::comma(Gap, accuracy = 1)),
+    hjust = ifelse(regional_patients_per_gp$Gap >= 0, -0.12, 1.12),
     size = 3.7
   ) +
   scale_x_continuous(
     labels = scales::label_comma(),
-    expand = expansion(mult = c(0, 0.16))
+    expand = expansion(mult = c(0.15, 0.18))
   ) +
   coord_cartesian(clip = "off") +
   labs(
-    title = "Qualified GP workforce FTE by NHS England region",
+    title = "Regional gap in patients per qualified GP FTE",
     subtitle = paste0(
-      format(latest_workforce_period, "%B %Y"),
-      "; practice-mapped TOTAL_GP_EXTG_FTE measure"
+      format(snapshot_date, "%B %Y"),
+      "; registered-patient rate minus ONS population rate"
     ),
-    x = "GP full-time equivalent",
+    x = "Additional registered patients per GP FTE",
     y = "NHS England region"
   ) +
   theme_minimal(base_size = 12) +

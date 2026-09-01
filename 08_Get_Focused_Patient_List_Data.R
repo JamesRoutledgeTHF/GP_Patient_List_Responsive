@@ -163,51 +163,9 @@ qualified_gp_workforce <- DBI::dbGetQuery(
     SELECT
       Practice_Code,
       Effective_Snapshot_Date AS Period,
-      CASE
-        WHEN SUM(
-          CASE WHEN Detailed_Staff_Role = 'Total' THEN 1 ELSE 0 END
-        ) > 0
-        THEN
-          SUM(
-            CASE
-              WHEN Detailed_Staff_Role = 'Total'
-              THEN TRY_CAST([Measure_Value] AS FLOAT)
-              ELSE 0
-            END
-          )
-          -
-          SUM(
-            CASE
-              WHEN Detailed_Staff_Role IN (
-                'GP in Training Grade F1/F2',
-                'GP in Training Grade ST1',
-                'GP in Training Grade ST2',
-                'GP in Training Grade ST3',
-                'GP in Training Grade ST4'
-              )
-              THEN TRY_CAST([Measure_Value] AS FLOAT)
-              ELSE 0
-            END
-          )
-        ELSE
-          SUM(
-            CASE
-              WHEN Detailed_Staff_Role NOT IN (
-                'GP in Training Grade F1/F2',
-                'GP in Training Grade ST1',
-                'GP in Training Grade ST2',
-                'GP in Training Grade ST3',
-                'GP in Training Grade ST4',
-                'Total'
-              )
-              THEN TRY_CAST([Measure_Value] AS FLOAT)
-              ELSE 0
-            END
-          )
-      END AS GP_FTE
-    FROM NHS_Workforce.Practice_Level_Census_Data_High_Level1
-    WHERE Staff_Group = 'GP'
-      AND Measure = 'FTE'
+      SUM(TRY_CAST(Measure_Value AS FLOAT)) AS GP_FTE
+    FROM NHS_Workforce.Practice_Level_Census_Data1
+    WHERE Measure = 'TOTAL_GP_EXTG_FTE'
       AND Effective_Snapshot_Date >= '{start_sql}'
       AND Effective_Snapshot_Date <= '{end_sql}'
     GROUP BY Practice_Code, Effective_Snapshot_Date

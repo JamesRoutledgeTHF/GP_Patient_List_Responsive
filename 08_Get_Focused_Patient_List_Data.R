@@ -81,6 +81,18 @@ lsoa_ons_snapshot <- DBI::dbGetQuery(
   ")
 )
 
+practice_registered_snapshot <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      GP_Practice_Code AS Practice_Code,
+      SUM(Size) AS Registered
+    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1
+    WHERE Effective_Snapshot_Date = '{snapshot_sql}'
+    GROUP BY GP_Practice_Code
+  ")
+)
+
 age_case <- "
   CASE
     WHEN Age = '95+' THEN '90+'
@@ -144,6 +156,32 @@ ons_demographic_snapshot <- DBI::dbGetQuery(
   ")
 ) %>%
   dplyr::filter(!is.na(Age_Band), !is.na(Sex))
+
+qualified_gp_workforce <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      Practice_Code,
+      Effective_Snapshot_Date AS Period,
+      SUM(TRY_CAST([Value] AS FLOAT)) AS GP_FTE
+    FROM NHS_Workforce.Practice_Level_Census_Data_High_Level1
+    WHERE Staff_Group = 'GP'
+      AND Measure = 'FTE'
+      AND Effective_Snapshot_Date >= '{start_sql}'
+      AND Effective_Snapshot_Date <= '{end_sql}'
+      AND Detailed_Staff_Role NOT IN (
+        'GP in Training Grade F1/F2',
+        'GP in Training Grade ST1',
+        'GP in Training Grade ST2',
+        'GP in Training Grade ST3',
+        'GP in Training Grade ST4',
+        'Total'
+      )
+    GROUP BY Practice_Code, Effective_Snapshot_Date
+    ORDER BY Effective_Snapshot_Date, Practice_Code
+  ")
+) %>%
+  dplyr::mutate(Period = as.Date(Period))
 
 imd_lookup <- DBI::dbGetQuery(
   con,

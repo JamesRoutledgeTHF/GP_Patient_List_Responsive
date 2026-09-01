@@ -125,6 +125,7 @@ Positive values indicate that registered-patient counts exceed ONS estimates. Ne
 source("01_connect_to_facts_and_dimensions.R")
 source("08_Get_Focused_Patient_List_Data.R")
 source("09_Get_LSOA_NHS_Region_Lookup.R")
+source("10_Get_Practice_Region_Lookup.R")
 DBI::dbDisconnect(con)
 ```
 
@@ -434,12 +435,175 @@ comparison_bar(
 )
 ```
 
+## Practice-mapped NHS England region comparison
+
+```{r practice-nhs-region-bars, fig.height=6}
+practice_region_snapshot <- practice_registered_snapshot %>%
+  inner_join(practice_region_lookup, by = "Practice_Code") %>%
+  group_by(NHS_Region) %>%
+  summarise(
+    Registered = sum(Registered, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  full_join(
+    region_snapshot %>%
+      transmute(
+        NHS_Region = as.character(NHSER26NM),
+        ONS
+      ),
+    by = "NHS_Region"
+  ) %>%
+  mutate(
+    Registered = replace_na(Registered, 0),
+    ONS = replace_na(ONS, 0),
+    Pct_Difference = pct_difference(Registered, ONS),
+    NHS_Region = reorder(NHS_Region, Pct_Difference)
+  )
+
+comparison_bar(
+  practice_region_snapshot,
+  NHS_Region,
+  title = "Practice-mapped registered patients compared with ONS by NHS region",
+  subtitle = paste0(
+    format(snapshot_date, "%B %Y"),
+    "; practices mapped using the NHS payments practice lookup"
+  ),
+  y_title = "NHS England region"
+)
+```
+
+# Qualified GP workforce
+
+These charts use practice-level GP workforce FTE and exclude GP training grades F1/F2 and ST1–ST4. The `Total` record is also excluded to prevent double-counting the detailed roles.
+
+```{r workforce-prepare, include=FALSE}
+workforce_region_trends <- qualified_gp_workforce %>%
+  inner_join(practice_region_lookup, by = "Practice_Code") %>%
+  group_by(NHS_Region, Period) %>%
+  summarise(
+    GP_FTE = sum(GP_FTE, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+workforce_national_trends <- qualified_gp_workforce %>%
+  group_by(Period) %>%
+  summarise(
+    GP_FTE = sum(GP_FTE, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r workforce-national-time-series}
+ggplot(
+  workforce_national_trends,
+  aes(x = Period, y = GP_FTE)
+) +
+  geom_line(linewidth = 1.15, colour = "#2166AC") +
+  scale_x_date(
+    limits = c(start_date, end_date),
+    date_breaks = "1 year",
+    date_labels = "%b\n%Y",
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  labs(
+    title = "Qualified GP workforce FTE in England",
+    subtitle = "Practice-level data; GP training grades F1/F2 and ST1–ST4 excluded",
+    x = NULL,
+    y = "GP full-time equivalent"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+```{r workforce-region-time-series, fig.height=6}
+ggplot(
+  workforce_region_trends,
+  aes(
+    x = Period,
+    y = GP_FTE,
+    colour = NHS_Region
+  )
+) +
+  geom_line(linewidth = 1) +
+  scale_x_date(
+    limits = c(start_date, end_date),
+    date_breaks = "1 year",
+    date_labels = "%Y",
+    expand = expansion(mult = c(0.01, 0.01))
+  ) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  labs(
+    title = "Qualified GP workforce FTE by NHS England region",
+    subtitle = "Practice-mapped data; GP training grades F1/F2 and ST1–ST4 excluded",
+    x = NULL,
+    y = "GP full-time equivalent",
+    colour = "NHS England region"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "right",
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+```{r workforce-region-latest, fig.height=6}
+latest_workforce_period <- max(
+  workforce_region_trends$Period,
+  na.rm = TRUE
+)
+
+latest_workforce_region <- workforce_region_trends %>%
+  filter(Period == latest_workforce_period) %>%
+  mutate(NHS_Region = reorder(NHS_Region, GP_FTE))
+
+ggplot(
+  latest_workforce_region,
+  aes(x = GP_FTE, y = NHS_Region)
+) +
+  geom_col(fill = "#2166AC", width = 0.7) +
+  geom_text(
+    aes(label = scales::comma(GP_FTE, accuracy = 1)),
+    hjust = -0.12,
+    size = 3.7
+  ) +
+  scale_x_continuous(
+    labels = scales::label_comma(),
+    expand = expansion(mult = c(0, 0.16))
+  ) +
+  coord_cartesian(clip = "off") +
+  labs(
+    title = "Qualified GP workforce FTE by NHS England region",
+    subtitle = paste0(
+      format(latest_workforce_period, "%B %Y"),
+      "; practice-mapped and training grades excluded"
+    ),
+    x = "GP full-time equivalent",
+    y = "NHS England region"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(5.5, 30, 5.5, 5.5)
+  )
+```
+
 ```{r lookup-coverage}
 coverage <- tibble::tibble(
-  Lookup = c("LSOA IMD decile", "NHS England region"),
+  Lookup = c(
+    "LSOA IMD decile",
+    "LSOA to NHS England region",
+    "Practice to NHS England region"
+  ),
   `Mapped registered population` = c(
     sum(imd_snapshot$Registered, na.rm = TRUE),
-    sum(region_snapshot$Registered, na.rm = TRUE)
+    sum(region_snapshot$Registered, na.rm = TRUE),
+    sum(practice_region_snapshot$Registered, na.rm = TRUE)
   ),
   `National registered population` = national_snapshot$Registered
 ) %>%
@@ -454,7 +618,7 @@ coverage <- tibble::tibble(
 
 knitr::kable(
   coverage,
-  caption = "LSOA lookup coverage for the snapshot analyses"
+  caption = "Geographic lookup coverage for the snapshot analyses"
 )
 ```
 
@@ -464,4 +628,6 @@ knitr::kable(
 - GP registered-patient LSOA data: `Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1`.
 - ONS population estimates: `Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1`.
 - LSOA IMD: latest snapshot in `Demography.Index_Of_Multiple_Deprivation_By_LSOA1`.
+- GP workforce: `NHS_Workforce.Practice_Level_Census_Data_High_Level1`, using FTE for GP roles and excluding training grades F1/F2 and ST1–ST4.
 - LSOA-to-NHS-region mapping: ONS, *LSOA (2021) to SICBL to ICB to NHSER to LAD (April 2026) Lookup in England*.
+- Practice-to-NHS-region mapping: `payments2425.csv`.

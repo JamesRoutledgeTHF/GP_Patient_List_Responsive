@@ -516,6 +516,10 @@ national_patients_per_gp_gap <- national_patients_per_gp %>%
 
 snapshot_month <- as.Date(format(snapshot_date, "%Y-%m-01"))
 
+national_patients_per_gp_snapshot <- national_patients_per_gp_gap %>%
+  filter(Month == snapshot_month) %>%
+  mutate(Geography = "England")
+
 workforce_snapshot_month <- workforce_region_trends %>%
   distinct(Month) %>%
   mutate(
@@ -596,85 +600,46 @@ ggplot(
   )
 ```
 
-```{r patients-per-gp-national-gap}
+```{r patients-per-gp-national-snapshot}
 ggplot(
-  national_patients_per_gp_gap,
-  aes(x = Month, y = Gap)
+  national_patients_per_gp_snapshot,
+  aes(x = Gap, y = Geography)
 ) +
-  geom_hline(yintercept = 0, colour = "grey55", linewidth = 0.5) +
-  geom_line(linewidth = 1.1, colour = "#6A3D9A") +
-  geom_point(size = 2.2, colour = "#6A3D9A") +
-  scale_x_date(
-    limits = c(start_date, end_date),
-    date_breaks = "1 year",
-    date_labels = "%b\n%Y",
-    expand = expansion(mult = c(0.01, 0.01))
+  geom_vline(xintercept = 0, colour = "grey55", linewidth = 0.5) +
+  geom_col(fill = "#6A3D9A", width = 0.55) +
+  geom_text(
+    aes(label = scales::comma(Gap, accuracy = 1)),
+    hjust = ifelse(national_patients_per_gp_snapshot$Gap >= 0, -0.12, 1.12),
+    size = 4
   ) +
-  scale_y_continuous(labels = scales::label_comma()) +
+  scale_x_continuous(
+    labels = scales::label_comma(),
+    expand = expansion(mult = c(0.18, 0.2))
+  ) +
+  coord_cartesian(clip = "off") +
   labs(
     title = "National gap in patients per qualified GP FTE",
-    subtitle = "Registered-patient rate minus the ONS population rate; available matched months",
-    x = NULL,
-    y = "Additional registered patients per GP FTE"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    panel.grid.minor = element_blank(),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
-```
-
-```{r patients-per-gp-region-comparison, fig.height=6}
-regional_patients_per_gp_long <- regional_patients_per_gp %>%
-  select(
-    NHS_Region,
-    `Registered patients` = Registered_Patients_Per_GP,
-    `ONS population estimate` = ONS_Patients_Per_GP
-  ) %>%
-  pivot_longer(
-    cols = c(`Registered patients`, `ONS population estimate`),
-    names_to = "Population_Source",
-    values_to = "Patients_Per_GP"
-  )
-
-ggplot(
-  regional_patients_per_gp_long,
-  aes(
-    x = NHS_Region,
-    y = Patients_Per_GP,
-    fill = Population_Source
-  )
-) +
-  geom_col(
-    position = position_dodge(width = 0.8),
-    width = 0.7
-  ) +
-  scale_fill_manual(
-    values = c(
-      "Registered patients" = "#2166AC",
-      "ONS population estimate" = "#B2182B"
-    )
-  ) +
-  scale_y_continuous(
-    labels = scales::label_comma(),
-    limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.08))
-  ) +
-  labs(
-    title = "Patients per qualified GP FTE by NHS England region",
     subtitle = paste0(
-      "Population snapshot: ", format(snapshot_date, "%B %Y"),
-      "; workforce month: ", format(workforce_snapshot_month, "%B %Y")
+      format(snapshot_date, "%B %Y"),
+      "; registered: ",
+      scales::comma(
+        national_patients_per_gp_snapshot$`Registered patients`,
+        accuracy = 1
+      ),
+      ", ONS: ",
+      scales::comma(
+        national_patients_per_gp_snapshot$`ONS population estimate`,
+        accuracy = 1
+      )
     ),
-    x = "NHS England region",
-    y = "Patients per qualified GP FTE",
-    fill = "Population source"
+    x = "Registered patients per GP FTE minus ONS patients per GP FTE",
+    y = NULL
   ) +
   theme_minimal(base_size = 12) +
   theme(
-    legend.position = "top",
+    panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank(),
-    axis.text.x = element_text(angle = 35, hjust = 1)
+    plot.margin = margin(5.5, 30, 5.5, 5.5)
   )
 ```
 

@@ -119,7 +119,7 @@ This report compares GP registered-patient counts with ONS population estimates 
 100 \times \frac{\text{registered patients} - \text{ONS population}}{\text{ONS population}}
 \]
 
-Positive values indicate that registered-patient counts exceed ONS estimates. Negative values indicate that registered-patient counts are lower. Sex-specific charts include female and male records only. The NHS-region lookup represents boundaries as at April 2026.
+Positive values indicate that registered-patient counts exceed ONS estimates. Negative values indicate that registered-patient counts are lower. National, age, and sex registered-patient counts come from practice-level single-age data. LSOA-level registered-patient data is used only for the IMD and NHS-region analyses. Sex-specific charts include female and male records only. The NHS-region lookup represents boundaries as at April 2026.
 
 ```{r connect-and-load-data, include=FALSE}
 source("01_connect_to_facts_and_dimensions.R")
@@ -146,7 +146,7 @@ lsoa_snapshot <- full_join(
   )
 
 demographic_snapshot <- full_join(
-  registered_demographic_snapshot,
+  practice_registered_demographic_snapshot,
   ons_demographic_snapshot,
   by = c("Sex", "Age_Band")
 ) %>%
@@ -236,11 +236,15 @@ knitr::kable(
 # National snapshot
 
 ```{r national-snapshot}
-national_snapshot <- lsoa_snapshot %>%
-  summarise(
-    Registered = sum(Registered, na.rm = TRUE),
-    ONS = sum(ONS, na.rm = TRUE)
-  ) %>%
+national_snapshot <- full_join(
+  national_registered %>%
+    filter(Period == snapshot_date) %>%
+    select(Period, Registered = Population),
+  national_ons %>%
+    filter(Period == snapshot_date) %>%
+    select(Period, ONS = Population),
+  by = "Period"
+) %>%
   mutate(
     Geography = "England",
     Pct_Difference = pct_difference(Registered, ONS)
@@ -456,7 +460,8 @@ knitr::kable(
 
 ## Data sources
 
-- GP registered-patient data: `Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1`.
+- GP registered-patient national, age, and sex data: `Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1`.
+- GP registered-patient LSOA data: `Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1`.
 - ONS population estimates: `Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1`.
 - LSOA IMD: latest snapshot in `Demography.Index_Of_Multiple_Deprivation_By_LSOA1`.
 - LSOA-to-NHS-region mapping: ONS, *LSOA (2021) to SICBL to ICB to NHSER to LAD (April 2026) Lookup in England*.

@@ -163,7 +163,7 @@ qualified_gp_workforce <- DBI::dbGetQuery(
     SELECT
       Practice_Code,
       Effective_Snapshot_Date AS Period,
-      SUM(TRY_CAST([Value] AS FLOAT)) AS GP_FTE
+      SUM(TRY_CAST([Measure_Value] AS FLOAT)) AS GP_FTE
     FROM NHS_Workforce.Practice_Level_Census_Data_High_Level1
     WHERE Staff_Group = 'GP'
       AND Measure = 'FTE'

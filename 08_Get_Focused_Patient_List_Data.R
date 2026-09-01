@@ -45,7 +45,8 @@ national_ons <- DBI::dbGetQuery(
     FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
     WHERE Effective_Snapshot_Date >= '{start_sql}'
       AND Effective_Snapshot_Date <= '{end_sql}'
-      AND Area_Code LIKE 'E01%'
+      AND Area_Code NOT LIKE 'W0%'
+      AND Area_Code <> 'OTHER'
     GROUP BY Effective_Snapshot_Date
     ORDER BY Effective_Snapshot_Date
   ")

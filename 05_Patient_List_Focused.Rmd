@@ -474,7 +474,7 @@ comparison_bar(
 
 # Qualified GP workforce
 
-These charts use practice-level GP workforce FTE and exclude GP training grades F1/F2 and ST1–ST4. Qualified GP FTE is calculated from the GP `Total` minus training-grade FTE, preserving the earlier history where detailed non-training roles are not consistently populated.
+These charts use the practice-level `TOTAL_GP_EXTG_FTE` workforce measure, which provides the longer historical series for GP FTE excluding training grades.
 
 ```{r workforce-prepare, include=FALSE}
 workforce_region_trends <- qualified_gp_workforce %>%
@@ -512,7 +512,7 @@ ggplot(
   ) +
   labs(
     title = "Qualified GP workforce FTE in England",
-    subtitle = "Practice-level data; GP training grades F1/F2 and ST1–ST4 excluded",
+    subtitle = "Practice-level TOTAL_GP_EXTG_FTE measure",
     x = NULL,
     y = "GP full-time equivalent"
   ) +
@@ -546,7 +546,7 @@ ggplot(
   ) +
   labs(
     title = "Qualified GP workforce FTE by NHS England region",
-    subtitle = "Practice-mapped data; GP training grades F1/F2 and ST1–ST4 excluded",
+    subtitle = "Practice-mapped TOTAL_GP_EXTG_FTE measure",
     x = NULL,
     y = "GP full-time equivalent",
     colour = "NHS England region"
@@ -588,7 +588,7 @@ ggplot(
     title = "Qualified GP workforce FTE by NHS England region",
     subtitle = paste0(
       format(latest_workforce_period, "%B %Y"),
-      "; practice-mapped and training grades excluded"
+      "; practice-mapped TOTAL_GP_EXTG_FTE measure"
     ),
     x = "GP full-time equivalent",
     y = "NHS England region"
@@ -636,6 +636,6 @@ knitr::kable(
 - GP registered-patient LSOA data: `Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1`.
 - ONS population estimates: `Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1`.
 - LSOA IMD: latest snapshot in `Demography.Index_Of_Multiple_Deprivation_By_LSOA1`.
-- GP workforce: `NHS_Workforce.Practice_Level_Census_Data_High_Level1`, using FTE for GP roles and excluding training grades F1/F2 and ST1–ST4.
+- GP workforce: `NHS_Workforce.Practice_Level_Census_Data1`, using `Measure = 'TOTAL_GP_EXTG_FTE'`.
 - LSOA-to-NHS-region mapping: ONS, *LSOA (2021) to SICBL to ICB to NHSER to LAD (April 2026) Lookup in England*.
 - Practice-to-NHS-region mapping: `payments2425.csv`.

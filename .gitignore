@@ -2,3 +2,6 @@
 .Rhistory
 .RData
 .Ruserdata
+NHSER24_boundary_polygons.rds
+ICB26_boundary_polygons.rds
+LSOA21_to_NHSER26.csv

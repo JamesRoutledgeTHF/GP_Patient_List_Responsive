@@ -82,6 +82,40 @@ lsoa_ons_snapshot <- DBI::dbGetQuery(
   ")
 )
 
+lsoa_registered_july <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      LSOA_Code,
+      Effective_Snapshot_Date AS Period,
+      SUM(Size) AS Registered
+    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
+    WHERE Effective_Snapshot_Date >= '{start_sql}'
+      AND Effective_Snapshot_Date <= '{end_sql}'
+      AND MONTH(Effective_Snapshot_Date) = 7
+      AND LSOA_Code LIKE 'E01%'
+    GROUP BY LSOA_Code, Effective_Snapshot_Date
+  ")
+) %>%
+  dplyr::mutate(Period = as.Date(Period))
+
+lsoa_ons_july <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      Area_Code AS LSOA_Code,
+      Effective_Snapshot_Date AS Period,
+      SUM(Size) AS ONS
+    FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
+    WHERE Effective_Snapshot_Date >= '{start_sql}'
+      AND Effective_Snapshot_Date <= '{end_sql}'
+      AND MONTH(Effective_Snapshot_Date) = 7
+      AND Area_Code LIKE 'E01%'
+    GROUP BY Area_Code, Effective_Snapshot_Date
+  ")
+) %>%
+  dplyr::mutate(Period = as.Date(Period))
+
 practice_registered_snapshot <- DBI::dbGetQuery(
   con,
   glue::glue("
@@ -110,6 +144,62 @@ age_case <- "
     ELSE NULL
   END
 "
+
+practice_registered_demographic_time_series <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      Effective_Snapshot_Date AS Period,
+      CASE
+        WHEN UPPER(Sex) = 'FEMALE' THEN 'Female'
+        WHEN UPPER(Sex) = 'MALE' THEN 'Male'
+      END AS Sex,
+      {age_case} AS Age_Band,
+      SUM(Size) AS Registered
+    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1
+    WHERE Effective_Snapshot_Date >= '{start_sql}'
+      AND Effective_Snapshot_Date <= '{end_sql}'
+      AND UPPER(Sex) IN ('FEMALE', 'MALE')
+    GROUP BY
+      Effective_Snapshot_Date,
+      CASE
+        WHEN UPPER(Sex) = 'FEMALE' THEN 'Female'
+        WHEN UPPER(Sex) = 'MALE' THEN 'Male'
+      END,
+      {age_case}
+  ")
+) %>%
+  dplyr::mutate(Period = as.Date(Period)) %>%
+  dplyr::filter(!is.na(Age_Band), !is.na(Sex))
+
+ons_demographic_time_series <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      Effective_Snapshot_Date AS Period,
+      CASE
+        WHEN UPPER(Sex) = 'FEMALE' THEN 'Female'
+        WHEN UPPER(Sex) = 'MALE' THEN 'Male'
+      END AS Sex,
+      {age_case} AS Age_Band,
+      SUM(Size) AS ONS
+    FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
+    WHERE Effective_Snapshot_Date >= '{start_sql}'
+      AND Effective_Snapshot_Date <= '{end_sql}'
+      AND Area_Code NOT LIKE 'W0%'
+      AND Area_Code <> 'OTHER'
+      AND UPPER(Sex) IN ('FEMALE', 'MALE')
+    GROUP BY
+      Effective_Snapshot_Date,
+      CASE
+        WHEN UPPER(Sex) = 'FEMALE' THEN 'Female'
+        WHEN UPPER(Sex) = 'MALE' THEN 'Male'
+      END,
+      {age_case}
+  ")
+) %>%
+  dplyr::mutate(Period = as.Date(Period)) %>%
+  dplyr::filter(!is.na(Age_Band), !is.na(Sex))
 
 practice_registered_demographic_snapshot <- DBI::dbGetQuery(
   con,

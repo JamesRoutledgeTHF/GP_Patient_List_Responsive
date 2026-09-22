@@ -18,7 +18,9 @@ fetch_nhser_lookup <- function() {
       endpoint,
       query = list(
         where = "1=1",
-        outFields = "LSOA21CD,NHSER26CD,NHSER26NM",
+        outFields = paste(
+          "LSOA21CD,ICB26CD,ICB26NM,NHSER26CD,NHSER26NM"
+        ),
         returnGeometry = "false",
         resultOffset = offset,
         resultRecordCount = page_size,
@@ -57,12 +59,21 @@ fetch_nhser_lookup <- function() {
     dplyr::distinct(LSOA21CD, .keep_all = TRUE)
 }
 
+required_lookup_fields <- c(
+  "LSOA21CD", "ICB26CD", "ICB26NM", "NHSER26CD", "NHSER26NM"
+)
+
 if (file.exists(nhser_cache)) {
   nhser_lookup <- readr::read_csv(
     nhser_cache,
     show_col_types = FALSE,
     col_types = readr::cols(.default = readr::col_character())
   )
+
+  if (!all(required_lookup_fields %in% names(nhser_lookup))) {
+    nhser_lookup <- fetch_nhser_lookup()
+    readr::write_csv(nhser_lookup, nhser_cache)
+  }
 } else {
   nhser_lookup <- fetch_nhser_lookup()
   readr::write_csv(nhser_lookup, nhser_cache)

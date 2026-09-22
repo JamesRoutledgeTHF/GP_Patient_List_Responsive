@@ -7,6 +7,8 @@ practice_region_lookup <- readr::read_csv(
 ) |>
   dplyr::transmute(
     Practice_Code = `Practice Code`,
+    ICB_Code = `Sub ICB Code`,
+    ICB_Name = `Sub ICB Name`,
     NHS_Region = dplyr::recode(
       `NHS England (Region) Name`,
       "EAST OF ENGLAND COMMISSIONING REGION" = "East of England",

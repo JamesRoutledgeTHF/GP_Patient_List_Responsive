@@ -66,19 +66,40 @@ pct_difference <- function(registered, ons) {
   )
 }
 
-comparison_bar <- function(data, category, title, subtitle, y_title = NULL) {
+comparison_bar <- function(
+  data,
+  category,
+  title,
+  subtitle,
+  y_title = NULL,
+  fixed_fill = NULL
+) {
   category_quo <- rlang::enquo(category)
 
-  ggplot(
+  p <- ggplot(
     data,
     aes(
       x = Pct_Difference,
-      y = !!category_quo,
-      fill = Pct_Difference
+      y = !!category_quo
     )
   ) +
-    geom_vline(xintercept = 0, colour = "grey55", linewidth = 0.5) +
-    geom_col(width = 0.7) +
+    geom_vline(xintercept = 0, colour = "grey55", linewidth = 0.5)
+
+  if (is.null(fixed_fill)) {
+    p <- p +
+      geom_col(aes(fill = Pct_Difference), width = 0.7) +
+      scale_fill_gradient2(
+        low = "#B2182B",
+        mid = "#F2F2F2",
+        high = "#2166AC",
+        midpoint = 0,
+        guide = "none"
+      )
+  } else {
+    p <- p + geom_col(fill = fixed_fill, width = 0.7)
+  }
+
+  p +
     geom_text(
       aes(label = sprintf("%.1f%%", Pct_Difference)),
       hjust = ifelse(data$Pct_Difference >= 0, -0.12, 1.12),
@@ -87,13 +108,6 @@ comparison_bar <- function(data, category, title, subtitle, y_title = NULL) {
     scale_x_continuous(
       labels = function(x) paste0(x, "%"),
       expand = expansion(mult = c(0.16, 0.18))
-    ) +
-    scale_fill_gradient2(
-      low = "#B2182B",
-      mid = "#F2F2F2",
-      high = "#2166AC",
-      midpoint = 0,
-      guide = "none"
     ) +
     coord_cartesian(clip = "off") +
     labs(
@@ -109,6 +123,24 @@ comparison_bar <- function(data, category, title, subtitle, y_title = NULL) {
       panel.grid.minor = element_blank(),
       plot.margin = margin(5.5, 30, 5.5, 5.5)
     )
+}
+
+first_matching_column <- function(data, exact = character(), regex = NULL) {
+  nm <- names(data)
+
+  exact_match <- exact[exact %in% nm]
+  if (length(exact_match) > 0) {
+    return(exact_match[[1]])
+  }
+
+  if (!is.null(regex)) {
+    regex_match <- nm[grepl(regex, nm, ignore.case = TRUE)]
+    if (length(regex_match) > 0) {
+      return(regex_match[[1]])
+    }
+  }
+
+  NA_character_
 }
 ```
 
@@ -295,31 +327,116 @@ imd_snapshot <- imd_july %>% filter(Period == snapshot_date)
 region_snapshot <- region_july %>% filter(Period == snapshot_date)
 icb_snapshot <- icb_july %>% filter(Period == snapshot_date)
 
-region_raw_change <- region_july %>%
-  group_by(NHSER26CD, NHSER26NM) %>%
-  arrange(Period, .by_group = TRUE) %>%
-  mutate(
-    Raw_Difference_Pct_Change = 100 *
-      (Raw_Difference - lag(Raw_Difference)) / abs(lag(Raw_Difference))
-  ) %>%
-  ungroup() %>%
-  filter(
-    Period == snapshot_date,
-    is.finite(Raw_Difference_Pct_Change)
+build_practice_icb_lookup <- function() {
+  candidate_sources <- list(
+    practice_region_lookup = practice_region_lookup,
+    practice_registered_snapshot = practice_registered_snapshot,
+    qualified_gp_workforce = qualified_gp_workforce
   )
 
-icb_raw_change <- icb_july %>%
-  group_by(ICB26CD, ICB26NM) %>%
-  arrange(Period, .by_group = TRUE) %>%
-  mutate(
-    Raw_Difference_Pct_Change = 100 *
-      (Raw_Difference - lag(Raw_Difference)) / abs(lag(Raw_Difference))
-  ) %>%
-  ungroup() %>%
-  filter(
-    Period == snapshot_date,
-    is.finite(Raw_Difference_Pct_Change)
+  current_icbs <- icb_snapshot %>%
+    distinct(ICB26CD, ICB26NM)
+
+  for (source_name in names(candidate_sources)) {
+    dat <- candidate_sources[[source_name]]
+
+    practice_col <- first_matching_column(
+      dat,
+      exact = c(
+        "Practice_Code", "Practice code", "PRACTICE_CODE",
+        "Organisation_Code", "Organisation code"
+      ),
+      regex = "practice.*code|organisation.*code"
+    )
+
+    icb_name_col <- first_matching_column(
+      dat,
+      exact = c(
+        "ICB26NM", "ICB_Name", "ICB NAME", "ICB Name", "ICB",
+        "Integrated_Care_Board", "Integrated Care Board",
+        "Integrated_Care_Board_Name", "Integrated Care Board Name"
+      ),
+      regex = "(^|[_. ])ICB([_. ]|$).*(name|nm)$|integrated.*care.*board.*name"
+    )
+
+    icb_code_col <- first_matching_column(
+      dat,
+      exact = c(
+        "ICB26CD", "ICB_Code", "ICB CODE", "ICB Code",
+        "Integrated_Care_Board_Code", "Integrated Care Board Code"
+      ),
+      regex = "(^|[_. ])ICB([_. ]|$).*(code|cd)$|integrated.*care.*board.*code"
+    )
+
+    if (
+      !is.na(practice_col) &&
+      (!is.na(icb_name_col) || !is.na(icb_code_col))
+    ) {
+      if ("Period" %in% names(dat)) {
+        dat <- dat %>%
+          mutate(Period = as.Date(Period)) %>%
+          filter(is.na(Period) | Period <= snapshot_date) %>%
+          arrange(desc(Period))
+      }
+
+      lookup <- tibble::tibble(
+        Practice_Code = as.character(dat[[practice_col]]),
+        ICB_Name_Raw = if (!is.na(icb_name_col)) {
+          as.character(dat[[icb_name_col]])
+        } else {
+          NA_character_
+        },
+        ICB_Code_Raw = if (!is.na(icb_code_col)) {
+          as.character(dat[[icb_code_col]])
+        } else {
+          NA_character_
+        }
+      ) %>%
+        filter(!is.na(Practice_Code), Practice_Code != "") %>%
+        distinct(Practice_Code, .keep_all = TRUE) %>%
+        left_join(
+          current_icbs %>%
+            rename(ICB_Name_From_Code = ICB26NM),
+          by = c("ICB_Code_Raw" = "ICB26CD")
+        ) %>%
+        left_join(
+          current_icbs %>%
+            rename(
+              ICB_Code_From_Name = ICB26CD,
+              ICB_Name_Raw = ICB26NM
+            ),
+          by = "ICB_Name_Raw"
+        ) %>%
+        mutate(
+          ICB_Code = case_when(
+            !is.na(ICB_Name_From_Code) ~ ICB_Code_Raw,
+            !is.na(ICB_Code_From_Name) ~ ICB_Code_From_Name,
+            TRUE ~ ICB_Code_Raw
+          ),
+          ICB = coalesce(ICB_Name_From_Code, ICB_Name_Raw),
+          ICB_Key = coalesce(ICB_Code, ICB)
+        ) %>%
+        filter(!is.na(ICB_Key), ICB_Key != "") %>%
+        select(Practice_Code, ICB_Key, ICB)
+
+      if (nrow(lookup) > 0) {
+        return(lookup)
+      }
+    }
+  }
+
+  stop(
+    paste0(
+      "The requested ICB workforce/payment charts need a practice-to-ICB ",
+      "field. None was found in practice_region_lookup, ",
+      "practice_registered_snapshot, or qualified_gp_workforce. ",
+      "Add an ICB name/code to one of those existing practice-level ",
+      "objects and rerun the report."
+    )
   )
+}
+
+practice_icb_lookup <- build_practice_icb_lookup()
 ```
 
 # National population over time
@@ -367,12 +484,15 @@ ggplot(
 ```{r age-time-series, fig.height=10}
 ggplot(
   age_time_series,
-  aes(x = Period, y = Population, colour = Source)
+  aes(x = Period, y = Population, colour = Source, group = Source)
 ) +
-  geom_line(linewidth = 0.8) +
+  geom_line(
+    data = age_time_series %>% filter(!is.na(Population)),
+    linewidth = 0.8
+  ) +
   geom_point(
     data = age_time_series %>%
-      filter(Source == "ONS population estimate"),
+      filter(Source == "ONS population estimate", !is.na(Population)),
     size = 1.3
   ) +
   facet_wrap(~ Age_Band, scales = "free_y", ncol = 2) +
@@ -401,12 +521,15 @@ ggplot(
 ```{r sex-time-series, fig.height=7}
 ggplot(
   sex_time_series,
-  aes(x = Period, y = Population, colour = Source)
+  aes(x = Period, y = Population, colour = Source, group = Source)
 ) +
-  geom_line(linewidth = 1) +
+  geom_line(
+    data = sex_time_series %>% filter(!is.na(Population)),
+    linewidth = 1
+  ) +
   geom_point(
     data = sex_time_series %>%
-      filter(Source == "ONS population estimate"),
+      filter(Source == "ONS population estimate", !is.na(Population)),
     size = 1.8
   ) +
   facet_wrap(~ Sex, ncol = 1, scales = "free_y") +
@@ -439,7 +562,8 @@ comparison_bar(
   national_snapshot,
   Geography,
   "National percentage difference",
-  format(snapshot_date, "%B %Y")
+  format(snapshot_date, "%B %Y"),
+  fixed_fill = "#2166AC"
 )
 ```
 
@@ -546,18 +670,40 @@ age_sex_snapshot %>%
 # IMD deciles using LSOA data
 
 ```{r imd-time-series, fig.height=7}
+imd_time_start <- as.Date("2015-07-01")
+
+imd_time_plot <- imd_july %>%
+  filter(
+    Period >= imd_time_start,
+    Period <= snapshot_date,
+    !is.na(Pct_Difference)
+  )
+
 ggplot(
-  imd_july,
-  aes(x = Period, y = Pct_Difference, colour = factor(IMD_Decile))
+  imd_time_plot,
+  aes(
+    x = Period,
+    y = Pct_Difference,
+    colour = factor(IMD_Decile),
+    group = IMD_Decile
+  )
 ) +
   geom_hline(yintercept = 0, colour = "grey65") +
   geom_line(linewidth = 0.9) +
   geom_point(size = 1.8) +
-  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  scale_x_date(
+    limits = c(imd_time_start, snapshot_date),
+    date_breaks = "1 year",
+    date_labels = "%Y"
+  ) +
   scale_y_continuous(labels = function(x) paste0(x, "%")) +
   labs(
     title = "Percentage difference by IMD decile over time",
-    subtitle = "July snapshots where LSOA codes map to the latest IMD lookup",
+    subtitle = paste0(
+      "July snapshots from 2015 to ",
+      format(snapshot_date, "%Y"),
+      "; LSOA codes mapped to the latest IMD lookup"
+    ),
     x = NULL,
     y = "Percentage difference from ONS",
     colour = "IMD decile"
@@ -648,48 +794,43 @@ icb_snapshot %>%
   knitr::kable(caption = "Population comparison by NHS integrated care board")
 ```
 
-# Maps
+# NHS integrated care board map
 
-Darker, more opaque areas have a larger absolute percentage difference. Fill colour shows whether registered-patient counts are above or below ONS.
-
-```{r region-map, fig.height=7}
-region_map <- nhser_boundaries %>%
-  left_join(region_snapshot, by = c("Boundary_Name" = "NHSER26NM"))
-
-ggplot(region_map) +
-  geom_polygon(
-    aes(
-      x = Longitude,
-      y = Latitude,
-      group = Polygon_Group,
-      fill = Pct_Difference,
-      alpha = abs(Pct_Difference)
-    ),
-    colour = "white",
-    linewidth = 0.4
-  ) +
-  scale_fill_gradient2(
-    low = "#B2182B",
-    mid = "#F7F7F7",
-    high = "#2166AC",
-    midpoint = 0,
-    labels = function(x) paste0(x, "%"),
-    na.value = "grey90"
-  ) +
-  scale_alpha_continuous(range = c(0.3, 1), guide = "none") +
-  labs(
-    title = "Registered-patient difference from ONS by NHS England region",
-    subtitle = format(snapshot_date, "%B %Y"),
-    fill = "Difference"
-  ) +
-  coord_equal() +
-  theme_void() +
-  theme(legend.position = "right")
-```
+The ICB map uses a deliberately steeper colour scale. Differences at 10% are visibly stronger, and differences at 20% or above use the darkest end of the scale. The NHS-region map has been removed.
 
 ```{r icb-map, fig.height=9}
 icb_map <- icb_boundaries %>%
   left_join(icb_snapshot, by = c("Boundary_Code" = "ICB26CD"))
+
+icb_map_limit <- max(
+  25,
+  ceiling(max(abs(icb_map$Pct_Difference), na.rm = TRUE) / 5) * 5
+)
+
+icb_map_breaks <- c(-20, -10, 0, 10, 20)
+
+icb_map_colours <- c(
+  "#67000D",
+  "#CB181D",
+  "#F7F7F7",
+  "#6BAED6",
+  "#2171B5",
+  "#08306B",
+  "#041F4A"
+)
+
+icb_map_values <- scales::rescale(
+  c(
+    -icb_map_limit,
+    -20,
+    -10,
+    0,
+    10,
+    20,
+    icb_map_limit
+  ),
+  from = c(-icb_map_limit, icb_map_limit)
+)
 
 ggplot(icb_map) +
   geom_polygon(
@@ -697,85 +838,31 @@ ggplot(icb_map) +
       x = Longitude,
       y = Latitude,
       group = Polygon_Group,
-      fill = Pct_Difference,
-      alpha = abs(Pct_Difference)
+      fill = Pct_Difference
     ),
     colour = "white",
     linewidth = 0.15
   ) +
-  scale_fill_gradient2(
-    low = "#B2182B",
-    mid = "#F7F7F7",
-    high = "#2166AC",
-    midpoint = 0,
+  scale_fill_gradientn(
+    colours = icb_map_colours,
+    values = icb_map_values,
+    limits = c(-icb_map_limit, icb_map_limit),
+    breaks = icb_map_breaks,
     labels = function(x) paste0(x, "%"),
+    oob = scales::squish,
     na.value = "grey90"
   ) +
-  scale_alpha_continuous(range = c(0.25, 1), guide = "none") +
   labs(
     title = "Registered-patient difference from ONS by NHS integrated care board",
-    subtitle = format(snapshot_date, "%B %Y"),
+    subtitle = paste0(
+      format(snapshot_date, "%B %Y"),
+      "; stronger colour emphasis from ±10%, with ±20% especially prominent"
+    ),
     fill = "Difference"
   ) +
   coord_equal() +
   theme_void() +
   theme(legend.position = "right")
-```
-
-# Change in the raw population difference
-
-The following charts show the year-on-year percentage change in the raw registered-minus-ONS difference between July 2023 and July 2024.
-
-```{r region-raw-difference-change, fig.height=6}
-ggplot(
-  region_raw_change,
-  aes(
-    x = Raw_Difference_Pct_Change,
-    y = reorder(NHSER26NM, Raw_Difference_Pct_Change),
-    fill = Raw_Difference_Pct_Change
-  )
-) +
-  geom_vline(xintercept = 0, colour = "grey55") +
-  geom_col() +
-  scale_x_continuous(labels = function(x) paste0(x, "%")) +
-  scale_fill_gradient2(
-    low = "#B2182B", mid = "grey90", high = "#2166AC",
-    midpoint = 0, guide = "none"
-  ) +
-  labs(
-    title = "Change in the raw population difference by NHS region",
-    subtitle = "July 2023 to July 2024",
-    x = "Percentage change in registered minus ONS difference",
-    y = NULL
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(panel.grid.major.y = element_blank())
-```
-
-```{r icb-raw-difference-change, fig.height=12}
-ggplot(
-  icb_raw_change,
-  aes(
-    x = Raw_Difference_Pct_Change,
-    y = reorder(ICB26NM, Raw_Difference_Pct_Change),
-    fill = Raw_Difference_Pct_Change
-  )
-) +
-  geom_vline(xintercept = 0, colour = "grey55") +
-  geom_col() +
-  scale_x_continuous(labels = function(x) paste0(x, "%")) +
-  scale_fill_gradient2(
-    low = "#B2182B", mid = "grey90", high = "#2166AC",
-    midpoint = 0, guide = "none"
-  ) +
-  labs(
-    title = "Change in the raw population difference by NHS ICB",
-    subtitle = "July 2023 to July 2024",
-    x = "Percentage change in registered minus ONS difference",
-    y = NULL
-  ) +
-  theme_minimal(base_size = 10) +
-  theme(panel.grid.major.y = element_blank())
 ```
 
 # Patients per qualified GP FTE
@@ -799,10 +886,10 @@ patients_per_gp_july <- population_national_july %>%
     Patients_Per_GP_FTE = Population / GP_FTE
   )
 
-workforce_region_snapshot <- qualified_gp_workforce %>%
-  filter(
-    format(Period, "%Y-%m") == format(snapshot_date, "%Y-%m")
-  ) %>%
+workforce_snapshot <- qualified_gp_workforce %>%
+  filter(format(Period, "%Y-%m") == format(snapshot_date, "%Y-%m"))
+
+workforce_region_snapshot <- workforce_snapshot %>%
   inner_join(practice_region_lookup, by = "Practice_Code") %>%
   group_by(NHS_Region) %>%
   summarise(GP_FTE = sum(GP_FTE, na.rm = TRUE), .groups = "drop")
@@ -816,10 +903,56 @@ patients_per_gp_region_snapshot <- region_snapshot %>%
   transmute(NHS_Region = NHSER26NM, ONS) %>%
   full_join(practice_region_registered, by = "NHS_Region") %>%
   inner_join(workforce_region_snapshot, by = "NHS_Region") %>%
+  filter(GP_FTE > 0) %>%
   mutate(
     Registered_Per_GP_FTE = Registered / GP_FTE,
-    ONS_Per_GP_FTE = ONS / GP_FTE,
-    Raw_Difference_Per_GP_FTE = Registered_Per_GP_FTE - ONS_Per_GP_FTE
+    ONS_Per_GP_FTE = ONS / GP_FTE
+  )
+
+workforce_icb_snapshot <- workforce_snapshot %>%
+  inner_join(practice_icb_lookup, by = "Practice_Code") %>%
+  group_by(ICB_Key, ICB) %>%
+  summarise(GP_FTE = sum(GP_FTE, na.rm = TRUE), .groups = "drop")
+
+practice_icb_registered <- practice_registered_snapshot %>%
+  inner_join(practice_icb_lookup, by = "Practice_Code") %>%
+  group_by(ICB_Key, ICB) %>%
+  summarise(Registered = sum(Registered, na.rm = TRUE), .groups = "drop")
+
+icb_population_snapshot <- icb_snapshot %>%
+  transmute(
+    ICB_Key = coalesce(as.character(ICB26CD), as.character(ICB26NM)),
+    ICB_Population_Name = ICB26NM,
+    ONS
+  )
+
+patients_per_gp_icb_snapshot <- icb_population_snapshot %>%
+  full_join(
+    practice_icb_registered %>% rename(ICB_Registered_Name = ICB),
+    by = "ICB_Key"
+  ) %>%
+  inner_join(
+    workforce_icb_snapshot %>% rename(ICB_Workforce_Name = ICB),
+    by = "ICB_Key"
+  ) %>%
+  filter(GP_FTE > 0) %>%
+  mutate(
+    ICB = coalesce(
+      ICB_Population_Name,
+      ICB_Registered_Name,
+      ICB_Workforce_Name
+    ),
+    Registered_Per_GP_FTE = Registered / GP_FTE,
+    ONS_Per_GP_FTE = ONS / GP_FTE
+  ) %>%
+  select(
+    ICB_Key,
+    ICB,
+    Registered,
+    ONS,
+    GP_FTE,
+    Registered_Per_GP_FTE,
+    ONS_Per_GP_FTE
   )
 
 patients_per_gp_national_snapshot <- patients_per_gp_july %>%
@@ -829,20 +962,46 @@ patients_per_gp_national_snapshot <- patients_per_gp_july %>%
   transmute(
     Geography = "England",
     Registered_Per_GP_FTE = `Registered patients`,
-    ONS_Per_GP_FTE = `ONS population estimate`,
-    Raw_Difference_Per_GP_FTE =
-      Registered_Per_GP_FTE - ONS_Per_GP_FTE
+    ONS_Per_GP_FTE = `ONS population estimate`
   )
 
-patients_per_gp_difference <- bind_rows(
-  patients_per_gp_national_snapshot %>%
-    select(Geography, Raw_Difference_Per_GP_FTE),
-  patients_per_gp_region_snapshot %>%
-    transmute(
-      Geography = NHS_Region,
-      Raw_Difference_Per_GP_FTE
-    )
-)
+patients_per_gp_region_long <- patients_per_gp_region_snapshot %>%
+  select(
+    NHS_Region,
+    `Registered patients` = Registered_Per_GP_FTE,
+    `ONS population` = ONS_Per_GP_FTE
+  ) %>%
+  pivot_longer(
+    -NHS_Region,
+    names_to = "Population basis",
+    values_to = "Patients_Per_GP_FTE"
+  )
+
+region_gp_order <- patients_per_gp_region_snapshot %>%
+  arrange(Registered_Per_GP_FTE) %>%
+  pull(NHS_Region)
+
+patients_per_gp_region_long <- patients_per_gp_region_long %>%
+  mutate(NHS_Region = factor(NHS_Region, levels = region_gp_order))
+
+patients_per_gp_icb_long <- patients_per_gp_icb_snapshot %>%
+  select(
+    ICB,
+    `Registered patients` = Registered_Per_GP_FTE,
+    `ONS population` = ONS_Per_GP_FTE
+  ) %>%
+  pivot_longer(
+    -ICB,
+    names_to = "Population basis",
+    values_to = "Patients_Per_GP_FTE"
+  )
+
+icb_gp_order <- patients_per_gp_icb_snapshot %>%
+  arrange(Registered_Per_GP_FTE) %>%
+  pull(ICB)
+
+patients_per_gp_icb_long <- patients_per_gp_icb_long %>%
+  mutate(ICB = factor(ICB, levels = icb_gp_order))
 ```
 
 ```{r patients-per-gp-july-time-series}
@@ -876,47 +1035,75 @@ ggplot(
   )
 ```
 
-```{r patients-per-gp-raw-difference, fig.height=7}
+## NHS England regions
+
+```{r patients-per-gp-region-bars, fig.height=7}
 ggplot(
-  patients_per_gp_difference,
+  patients_per_gp_region_long,
   aes(
-    x = Raw_Difference_Per_GP_FTE,
-    y = reorder(Geography, Raw_Difference_Per_GP_FTE),
-    fill = Raw_Difference_Per_GP_FTE
+    x = Patients_Per_GP_FTE,
+    y = NHS_Region,
+    fill = `Population basis`
   )
 ) +
-  geom_vline(xintercept = 0, colour = "grey55") +
-  geom_col() +
-  geom_text(
-    aes(label = scales::comma(Raw_Difference_Per_GP_FTE, accuracy = 1)),
-    hjust = ifelse(
-      patients_per_gp_difference$Raw_Difference_Per_GP_FTE >= 0,
-      -0.12,
-      1.12
-    )
-  ) +
+  geom_col(position = position_dodge(width = 0.78), width = 0.7) +
   scale_x_continuous(
     labels = scales::label_comma(),
-    expand = expansion(mult = c(0.15, 0.18))
+    limits = c(0, NA),
+    expand = expansion(mult = c(0, 0.08))
   ) +
-  scale_fill_gradient2(
-    low = "#B2182B", mid = "grey90", high = "#2166AC",
-    midpoint = 0, guide = "none"
-  ) +
-  coord_cartesian(clip = "off") +
+  scale_fill_manual(values = c(
+    "Registered patients" = "#2166AC",
+    "ONS population" = "#B2182B"
+  )) +
   labs(
-    title = "Raw difference in patients per qualified GP FTE",
-    subtitle = paste0(
-      format(snapshot_date, "%B %Y"),
-      "; registered-patient rate minus ONS rate"
-    ),
-    x = "Additional registered patients per GP FTE",
-    y = NULL
+    title = "Patients per qualified GP FTE by NHS England region",
+    subtitle = format(snapshot_date, "%B %Y"),
+    x = "Patients per GP FTE",
+    y = NULL,
+    fill = NULL
   ) +
   theme_minimal(base_size = 12) +
   theme(
+    legend.position = "top",
     panel.grid.major.y = element_blank(),
-    plot.margin = margin(5.5, 30, 5.5, 5.5)
+    panel.grid.minor = element_blank()
+  )
+```
+
+## Integrated care boards
+
+```{r patients-per-gp-icb-bars, fig.height=13}
+ggplot(
+  patients_per_gp_icb_long,
+  aes(
+    x = Patients_Per_GP_FTE,
+    y = ICB,
+    fill = `Population basis`
+  )
+) +
+  geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  scale_x_continuous(
+    labels = scales::label_comma(),
+    limits = c(0, NA),
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  scale_fill_manual(values = c(
+    "Registered patients" = "#2166AC",
+    "ONS population" = "#B2182B"
+  )) +
+  labs(
+    title = "Patients per qualified GP FTE by NHS integrated care board",
+    subtitle = format(snapshot_date, "%B %Y"),
+    x = "Patients per GP FTE",
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
   )
 ```
 
@@ -927,29 +1114,36 @@ patients_per_gp_national_snapshot %>%
     `Registered patients per GP FTE` =
       scales::comma(Registered_Per_GP_FTE, accuracy = 1),
     `ONS population per GP FTE` =
-      scales::comma(ONS_Per_GP_FTE, accuracy = 1),
-    `Raw difference` =
-      scales::comma(Raw_Difference_Per_GP_FTE, accuracy = 1)
+      scales::comma(ONS_Per_GP_FTE, accuracy = 1)
   ) %>%
   knitr::kable(caption = "National patients per GP FTE comparison")
 
 patients_per_gp_region_snapshot %>%
-  arrange(desc(Raw_Difference_Per_GP_FTE)) %>%
+  arrange(desc(Registered_Per_GP_FTE)) %>%
   transmute(
     `NHS England region` = NHS_Region,
     `Registered patients per GP FTE` =
       scales::comma(Registered_Per_GP_FTE, accuracy = 1),
     `ONS population per GP FTE` =
-      scales::comma(ONS_Per_GP_FTE, accuracy = 1),
-    `Raw difference` =
-      scales::comma(Raw_Difference_Per_GP_FTE, accuracy = 1)
+      scales::comma(ONS_Per_GP_FTE, accuracy = 1)
   ) %>%
   knitr::kable(caption = "Regional patients per GP FTE comparison")
+
+patients_per_gp_icb_snapshot %>%
+  arrange(desc(Registered_Per_GP_FTE)) %>%
+  transmute(
+    ICB,
+    `Registered patients per GP FTE` =
+      scales::comma(Registered_Per_GP_FTE, accuracy = 1),
+    `ONS population per GP FTE` =
+      scales::comma(ONS_Per_GP_FTE, accuracy = 1)
+  ) %>%
+  knitr::kable(caption = "ICB patients per GP FTE comparison")
 ```
 
 # Potential payment reduction
 
-The payment scenario uses the latest available records for the metric Total NHS Payments to General Practice Minus Deductions from the payments query in 03_Payments_To_GP_Practice.R. It compares the observed payment per registered patient with the payment per ONS-estimated resident and estimates the reduction if the registered-patient payment rate were applied to the ONS population.
+The payment scenario uses the latest available records for the metric Total NHS Payments to General Practice Minus Deductions from the payments query in 03_Payments_To_GP_Practice.R. It compares payment per registered patient with payment per ONS-estimated resident and estimates the potential overall reduction if the registered-patient payment rate were applied to the ONS population.
 
 ```{r payment-scenario-prepare, include=FALSE}
 payment_metric_name <- "Total NHS Payments to General Practice Minus Deductions"
@@ -1006,24 +1200,101 @@ regional_payment_scenario <- payment_by_practice %>%
     ONS_Adjusted_Payments = Payment_Per_Registered * ONS,
     Potential_Reduction = Total_Payments - ONS_Adjusted_Payments
   )
-```
 
-```{r national-payment-chart}
+icb_payment_scenario <- payment_by_practice %>%
+  inner_join(practice_icb_lookup, by = "Practice_Code") %>%
+  group_by(ICB_Key, ICB) %>%
+  summarise(
+    Total_Payments = sum(Total_Payments, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  rename(ICB_Payment_Name = ICB) %>%
+  left_join(
+    practice_icb_registered %>% rename(ICB_Registered_Name = ICB),
+    by = "ICB_Key"
+  ) %>%
+  left_join(icb_population_snapshot, by = "ICB_Key") %>%
+  mutate(
+    ICB = coalesce(
+      ICB_Population_Name,
+      ICB_Registered_Name,
+      ICB_Payment_Name
+    )
+  ) %>%
+  filter(Registered > 0, ONS > 0) %>%
+  mutate(
+    Payment_Per_Registered = Total_Payments / Registered,
+    Payment_Per_ONS = Total_Payments / ONS,
+    ONS_Adjusted_Payments = Payment_Per_Registered * ONS,
+    Potential_Reduction = Total_Payments - ONS_Adjusted_Payments
+  ) %>%
+  select(
+    ICB_Key,
+    ICB,
+    Total_Payments,
+    Registered,
+    ONS,
+    Payment_Per_Registered,
+    Payment_Per_ONS,
+    ONS_Adjusted_Payments,
+    Potential_Reduction
+  )
+
 national_payment_long <- national_payment_scenario %>%
   select(
     Geography,
-    `Registered-patient denominator` = Payment_Per_Registered,
-    `ONS population denominator` = Payment_Per_ONS
+    `Registered population` = Payment_Per_Registered,
+    `ONS population` = Payment_Per_ONS
   ) %>%
   pivot_longer(
     -Geography,
-    names_to = "Denominator",
+    names_to = "Population basis",
     values_to = "Payment_Per_Person"
   )
 
+regional_payment_long <- regional_payment_scenario %>%
+  select(
+    NHS_Region,
+    `Registered population` = Payment_Per_Registered,
+    `ONS population` = Payment_Per_ONS
+  ) %>%
+  pivot_longer(
+    -NHS_Region,
+    names_to = "Population basis",
+    values_to = "Payment_Per_Person"
+  )
+
+region_payment_order <- regional_payment_scenario %>%
+  arrange(Payment_Per_Registered) %>%
+  pull(NHS_Region)
+
+regional_payment_long <- regional_payment_long %>%
+  mutate(NHS_Region = factor(NHS_Region, levels = region_payment_order))
+
+icb_payment_long <- icb_payment_scenario %>%
+  select(
+    ICB,
+    `Registered population` = Payment_Per_Registered,
+    `ONS population` = Payment_Per_ONS
+  ) %>%
+  pivot_longer(
+    -ICB,
+    names_to = "Population basis",
+    values_to = "Payment_Per_Person"
+  )
+
+icb_payment_order <- icb_payment_scenario %>%
+  arrange(Payment_Per_Registered) %>%
+  pull(ICB)
+
+icb_payment_long <- icb_payment_long %>%
+  mutate(ICB = factor(ICB, levels = icb_payment_order))
+```
+
+```{r national-payment-chart}
 ggplot(
   national_payment_long,
-  aes(x = Denominator, y = Payment_Per_Person, fill = Denominator)
+  aes(x = `Population basis`, y = Payment_Per_Person, fill = `Population basis`)
 ) +
   geom_col(width = 0.65) +
   geom_text(
@@ -1035,9 +1306,12 @@ ggplot(
     limits = c(0, NA),
     expand = expansion(mult = c(0, 0.12))
   ) +
-  scale_fill_manual(values = c("#2166AC", "#B2182B"), guide = "none") +
+  scale_fill_manual(values = c(
+    "Registered population" = "#2166AC",
+    "ONS population" = "#B2182B"
+  ), guide = "none") +
   labs(
-    title = "National payment per person under alternative denominators",
+    title = "National payment per person under alternative population denominators",
     subtitle = paste(
       "Payment data snapshot:",
       format(payment_snapshot_date, "%B %Y"),
@@ -1051,23 +1325,91 @@ ggplot(
   theme(panel.grid.major.x = element_blank())
 ```
 
-```{r national-payment-table}
-national_payment_scenario %>%
-  transmute(
-    Geography,
-    `Total payments` =
-      scales::dollar(Total_Payments, prefix = "£", accuracy = 1),
-    `Payment per registered patient` =
-      scales::dollar(Payment_Per_Registered, prefix = "£", accuracy = 0.01),
-    `Payment per ONS resident` =
-      scales::dollar(Payment_Per_ONS, prefix = "£", accuracy = 0.01),
-    `Potential payment reduction` =
-      scales::dollar(Potential_Reduction, prefix = "£", accuracy = 1)
-  ) %>%
-  knitr::kable(caption = "National payment scenario")
+## Payment per person by NHS England region
+
+```{r regional-payment-per-person-chart, fig.height=7}
+ggplot(
+  regional_payment_long,
+  aes(
+    x = Payment_Per_Person,
+    y = NHS_Region,
+    fill = `Population basis`
+  )
+) +
+  geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  scale_x_continuous(
+    labels = scales::label_currency(prefix = "£"),
+    limits = c(0, NA),
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  scale_fill_manual(values = c(
+    "Registered population" = "#2166AC",
+    "ONS population" = "#B2182B"
+  )) +
+  labs(
+    title = "Payment per person by NHS England region",
+    subtitle = paste(
+      "Payment data snapshot:",
+      format(payment_snapshot_date, "%B %Y"),
+      "| Population snapshot:",
+      format(snapshot_date, "%B %Y")
+    ),
+    x = "Payment per person",
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
 ```
 
-```{r regional-payment-chart, fig.height=7}
+## Payment per person by integrated care board
+
+```{r icb-payment-per-person-chart, fig.height=13}
+ggplot(
+  icb_payment_long,
+  aes(
+    x = Payment_Per_Person,
+    y = ICB,
+    fill = `Population basis`
+  )
+) +
+  geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  scale_x_continuous(
+    labels = scales::label_currency(prefix = "£"),
+    limits = c(0, NA),
+    expand = expansion(mult = c(0, 0.08))
+  ) +
+  scale_fill_manual(values = c(
+    "Registered population" = "#2166AC",
+    "ONS population" = "#B2182B"
+  )) +
+  labs(
+    title = "Payment per person by NHS integrated care board",
+    subtitle = paste(
+      "Payment data snapshot:",
+      format(payment_snapshot_date, "%B %Y"),
+      "| Population snapshot:",
+      format(snapshot_date, "%B %Y")
+    ),
+    x = "Payment per person",
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+## Potential overall payment reduction by NHS England region
+
+```{r regional-payment-reduction-chart, fig.height=7}
 ggplot(
   regional_payment_scenario,
   aes(
@@ -1086,11 +1428,14 @@ ggplot(
     )
   ) +
   scale_fill_gradient2(
-    low = "#B2182B", mid = "grey90", high = "#2166AC",
-    midpoint = 0, guide = "none"
+    low = "#B2182B",
+    mid = "grey90",
+    high = "#2166AC",
+    midpoint = 0,
+    guide = "none"
   ) +
   labs(
-    title = "Potential payment reduction by NHS England region",
+    title = "Potential overall payment reduction by NHS England region",
     subtitle = "Registered-patient payment rate applied to the ONS population",
     x = "Potential reduction",
     y = NULL
@@ -1099,7 +1444,58 @@ ggplot(
   theme(panel.grid.major.y = element_blank())
 ```
 
-```{r regional-payment-table}
+## Potential overall payment reduction by integrated care board
+
+```{r icb-payment-reduction-chart, fig.height=13}
+ggplot(
+  icb_payment_scenario,
+  aes(
+    x = Potential_Reduction,
+    y = reorder(ICB, Potential_Reduction),
+    fill = Potential_Reduction
+  )
+) +
+  geom_vline(xintercept = 0, colour = "grey55") +
+  geom_col() +
+  scale_x_continuous(
+    labels = scales::label_currency(
+      prefix = "£",
+      scale = 1e-6,
+      suffix = "m"
+    )
+  ) +
+  scale_fill_gradient2(
+    low = "#B2182B",
+    mid = "grey90",
+    high = "#2166AC",
+    midpoint = 0,
+    guide = "none"
+  ) +
+  labs(
+    title = "Potential overall payment reduction by NHS integrated care board",
+    subtitle = "Registered-patient payment rate applied to the ONS population",
+    x = "Potential reduction",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(panel.grid.major.y = element_blank())
+```
+
+```{r payment-tables}
+national_payment_scenario %>%
+  transmute(
+    Geography,
+    `Total payments` =
+      scales::dollar(Total_Payments, prefix = "£", accuracy = 1),
+    `Payment per registered patient` =
+      scales::dollar(Payment_Per_Registered, prefix = "£", accuracy = 0.01),
+    `Payment per ONS resident` =
+      scales::dollar(Payment_Per_ONS, prefix = "£", accuracy = 0.01),
+    `Potential payment reduction` =
+      scales::dollar(Potential_Reduction, prefix = "£", accuracy = 1)
+  ) %>%
+  knitr::kable(caption = "National payment scenario")
+
 regional_payment_scenario %>%
   arrange(desc(Potential_Reduction)) %>%
   transmute(
@@ -1114,6 +1510,21 @@ regional_payment_scenario %>%
       scales::dollar(Potential_Reduction, prefix = "£", accuracy = 1)
   ) %>%
   knitr::kable(caption = "Regional payment scenario")
+
+icb_payment_scenario %>%
+  arrange(desc(Potential_Reduction)) %>%
+  transmute(
+    ICB,
+    `Total payments` =
+      scales::dollar(Total_Payments, prefix = "£", accuracy = 1),
+    `Payment per registered patient` =
+      scales::dollar(Payment_Per_Registered, prefix = "£", accuracy = 0.01),
+    `Payment per ONS resident` =
+      scales::dollar(Payment_Per_ONS, prefix = "£", accuracy = 0.01),
+    `Potential payment reduction` =
+      scales::dollar(Potential_Reduction, prefix = "£", accuracy = 1)
+  ) %>%
+  knitr::kable(caption = "ICB payment scenario")
 ```
 
 ## Data sources
@@ -1126,4 +1537,5 @@ regional_payment_scenario %>%
 - GP payments: NHS_Payments_To_GP_Practices.Figures1 via 03_Payments_To_GP_Practice.R.
 - LSOA-to-ICB and NHS-region lookup: ONS April 2026 lookup.
 - Practice-to-region lookup: payments2425.csv.
+- Practice-to-ICB mapping: detected from the available practice-level lookup, registered-patient snapshot, or workforce data and reconciled to the ICB26 lookup where possible.
 - Boundary maps: ONS Open Geography Portal generalised boundaries.

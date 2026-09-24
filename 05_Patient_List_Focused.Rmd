@@ -299,7 +299,7 @@ imd_july <- lsoa_july %>%
   )
 
 region_july <- lsoa_july_geography %>%
-  group_by(Period, NHSER26CD, NHSER26NM) %>%
+  group_by(Period, NHSER24CD, NHSER24NM) %>%
   summarise(
     Registered = sum(Registered, na.rm = TRUE),
     ONS = sum(ONS, na.rm = TRUE),
@@ -311,7 +311,7 @@ region_july <- lsoa_july_geography %>%
   )
 
 icb_july <- lsoa_july_geography %>%
-  group_by(Period, ICB26CD, ICB26NM) %>%
+  group_by(Period, ICB24CD, ICB24NM) %>%
   summarise(
     Registered = sum(Registered, na.rm = TRUE),
     ONS = sum(ONS, na.rm = TRUE),
@@ -354,8 +354,8 @@ if (length(missing_icb_lookup_cols) > 0) {
 
 if (nrow(practice_icb_lookup) == 0) {
   stop(
-    "The practice-to-ICB lookup is empty. Check the Sub ICB to ICB26 ",
-    "mapping in 10_Get_Practice_Region_Lookup.R."
+    "The practice-to-ICB lookup is empty. Check the practice ICB fields ",
+    "in payments2425.csv and 10_Get_Practice_Region_Lookup.R."
   )
 }
 ```
@@ -618,11 +618,11 @@ imd_snapshot %>%
 
 ```{r region-snapshot-chart, fig.height=6}
 region_snapshot_plot <- region_snapshot %>%
-  mutate(NHSER26NM = reorder(NHSER26NM, Pct_Difference))
+  mutate(NHSER24NM = reorder(NHSER24NM, Pct_Difference))
 
 comparison_bar(
   region_snapshot_plot,
-  NHSER26NM,
+  NHSER24NM,
   "Percentage difference by NHS England region",
   format(snapshot_date, "%B %Y"),
   "NHS England region"
@@ -633,7 +633,7 @@ comparison_bar(
 region_snapshot %>%
   arrange(desc(Pct_Difference)) %>%
   transmute(
-    `NHS England region` = NHSER26NM,
+    `NHS England region` = NHSER24NM,
     `Registered patients` = scales::comma(Registered),
     `ONS population` = scales::comma(ONS),
     `Raw difference` = scales::comma(Raw_Difference),
@@ -646,11 +646,11 @@ region_snapshot %>%
 
 ```{r icb-snapshot-chart, fig.height=12}
 icb_snapshot_plot <- icb_snapshot %>%
-  mutate(ICB26NM = reorder(ICB26NM, Pct_Difference))
+  mutate(ICB24NM = reorder(ICB24NM, Pct_Difference))
 
 comparison_bar(
   icb_snapshot_plot,
-  ICB26NM,
+  ICB24NM,
   "Percentage difference by NHS integrated care board",
   format(snapshot_date, "%B %Y"),
   "Integrated care board"
@@ -661,7 +661,7 @@ comparison_bar(
 icb_snapshot %>%
   arrange(desc(Pct_Difference)) %>%
   transmute(
-    ICB = ICB26NM,
+    ICB = ICB24NM,
     `Registered patients` = scales::comma(Registered),
     `ONS population` = scales::comma(ONS),
     `Raw difference` = scales::comma(Raw_Difference),
@@ -706,7 +706,11 @@ practice_region_registered <- practice_registered_snapshot %>%
   summarise(Registered = sum(Registered, na.rm = TRUE), .groups = "drop")
 
 patients_per_gp_region_snapshot <- region_snapshot %>%
-  transmute(NHS_Region = NHSER26NM, ONS) %>%
+  transmute(
+    NHS_Region = normalise_region_name(NHSER24NM),
+    NHS_Region_Display = NHSER24NM,
+    ONS
+  ) %>%
   full_join(practice_region_registered, by = "NHS_Region") %>%
   inner_join(workforce_region_snapshot, by = "NHS_Region") %>%
   filter(GP_FTE > 0) %>%
@@ -729,8 +733,8 @@ practice_icb_registered <- practice_registered_snapshot %>%
 
 icb_population_snapshot <- icb_snapshot %>%
   transmute(
-    ICB_Key = coalesce(as.character(ICB26CD), as.character(ICB26NM)),
-    ICB_Population_Name = ICB26NM,
+    ICB_Key = normalise_icb_name(ICB24NM),
+    ICB_Population_Name = ICB24NM,
     ONS
   )
 
@@ -1058,7 +1062,12 @@ regional_payment_scenario <- payment_by_practice %>%
   ) %>%
   left_join(practice_region_registered, by = "NHS_Region") %>%
   left_join(
-    region_snapshot %>% transmute(NHS_Region = NHSER26NM, ONS),
+    region_snapshot %>%
+      transmute(
+        NHS_Region = normalise_region_name(NHSER24NM),
+        NHS_Region_Display = NHSER24NM,
+        ONS
+      ),
     by = "NHS_Region"
   ) %>%
   filter(Registered > 0, ONS > 0) %>%
@@ -1464,8 +1473,8 @@ icb_payment_scenario %>%
 - GP registered-patient LSOA data: Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1.
 - ONS population estimates: Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1.
 - LSOA IMD: latest snapshot in Demography.Index_Of_Multiple_Deprivation_By_LSOA1.
-- GP workforce: NHS_Workforce.Practice_Level_Census_Data1, using TOTAL_GP_EXTG_FTE.
+- GP workforce: NHS_Workforce.Practice_Level_Census_Data_High_Level1; Staff_Group = GP, Measure = FTE, using Measure_Value for Salaried By Practice, Salaried By Other, Partner/Provider, and Senior Partner.
 - GP payments: NHS_Payments_To_GP_Practices.Figures1 via 03_Payments_To_GP_Practice.R.
-- LSOA-to-ICB and NHS-region lookup: ONS April 2026 lookup.
+- LSOA-to-ICB lookup: official ONS April 2024 LSOA21-to-SICBL24-to-ICB24 lookup; NHS England region is added from the official ONS 2024 ICB24-to-NHSER24 relationship.
 - Practice-to-region lookup: payments2425.csv.
-- Practice-to-ICB mapping: practice Sub ICB information from payments2425.csv is reconciled to the official ONS SICBL26-to-ICB26 lookup.
+- Practice-to-ICB mapping: taken directly from the Sub ICB fields in payments2425.csv; ONS geography is not used to assign practices to ICBs.

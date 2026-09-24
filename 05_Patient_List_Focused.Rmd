@@ -669,51 +669,6 @@ age_sex_snapshot %>%
 
 # IMD deciles using LSOA data
 
-```{r imd-time-series, fig.height=7}
-imd_time_start <- as.Date("2015-07-01")
-
-imd_time_plot <- imd_july %>%
-  filter(
-    Period >= imd_time_start,
-    Period <= snapshot_date,
-    !is.na(Pct_Difference)
-  )
-
-ggplot(
-  imd_time_plot,
-  aes(
-    x = Period,
-    y = Pct_Difference,
-    colour = factor(IMD_Decile),
-    group = IMD_Decile
-  )
-) +
-  geom_hline(yintercept = 0, colour = "grey65") +
-  geom_line(linewidth = 0.9) +
-  geom_point(size = 1.8) +
-  scale_x_date(
-    limits = c(imd_time_start, snapshot_date),
-    date_breaks = "1 year",
-    date_labels = "%Y"
-  ) +
-  scale_y_continuous(labels = function(x) paste0(x, "%")) +
-  labs(
-    title = "Percentage difference by IMD decile over time",
-    subtitle = paste0(
-      "July snapshots from 2015 to ",
-      format(snapshot_date, "%Y"),
-      "; LSOA codes mapped to the latest IMD lookup"
-    ),
-    x = NULL,
-    y = "Percentage difference from ONS",
-    colour = "IMD decile"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    legend.position = "right",
-    panel.grid.minor = element_blank()
-  )
-```
 
 ```{r imd-snapshot-chart, fig.height=6}
 comparison_bar(
@@ -794,76 +749,6 @@ icb_snapshot %>%
   knitr::kable(caption = "Population comparison by NHS integrated care board")
 ```
 
-# NHS integrated care board map
-
-The ICB map uses a deliberately steeper colour scale. Differences at 10% are visibly stronger, and differences at 20% or above use the darkest end of the scale. The NHS-region map has been removed.
-
-```{r icb-map, fig.height=9}
-icb_map <- icb_boundaries %>%
-  left_join(icb_snapshot, by = c("Boundary_Code" = "ICB26CD"))
-
-icb_map_limit <- max(
-  25,
-  ceiling(max(abs(icb_map$Pct_Difference), na.rm = TRUE) / 5) * 5
-)
-
-icb_map_breaks <- c(-20, -10, 0, 10, 20)
-
-icb_map_colours <- c(
-  "#67000D",
-  "#CB181D",
-  "#F7F7F7",
-  "#6BAED6",
-  "#2171B5",
-  "#08306B",
-  "#041F4A"
-)
-
-icb_map_values <- scales::rescale(
-  c(
-    -icb_map_limit,
-    -20,
-    -10,
-    0,
-    10,
-    20,
-    icb_map_limit
-  ),
-  from = c(-icb_map_limit, icb_map_limit)
-)
-
-ggplot(icb_map) +
-  geom_polygon(
-    aes(
-      x = Longitude,
-      y = Latitude,
-      group = Polygon_Group,
-      fill = Pct_Difference
-    ),
-    colour = "white",
-    linewidth = 0.15
-  ) +
-  scale_fill_gradientn(
-    colours = icb_map_colours,
-    values = icb_map_values,
-    limits = c(-icb_map_limit, icb_map_limit),
-    breaks = icb_map_breaks,
-    labels = function(x) paste0(x, "%"),
-    oob = scales::squish,
-    na.value = "grey90"
-  ) +
-  labs(
-    title = "Registered-patient difference from ONS by NHS integrated care board",
-    subtitle = paste0(
-      format(snapshot_date, "%B %Y"),
-      "; stronger colour emphasis from ±10%, with ±20% especially prominent"
-    ),
-    fill = "Difference"
-  ) +
-  coord_equal() +
-  theme_void() +
-  theme(legend.position = "right")
-```
 
 # Patients per qualified GP FTE
 
@@ -906,7 +791,9 @@ patients_per_gp_region_snapshot <- region_snapshot %>%
   filter(GP_FTE > 0) %>%
   mutate(
     Registered_Per_GP_FTE = Registered / GP_FTE,
-    ONS_Per_GP_FTE = ONS / GP_FTE
+    ONS_Per_GP_FTE = ONS / GP_FTE,
+    Pct_Difference_Per_GP_FTE =
+      100 * (Registered_Per_GP_FTE - ONS_Per_GP_FTE) / ONS_Per_GP_FTE
   )
 
 workforce_icb_snapshot <- workforce_snapshot %>%
@@ -1047,10 +934,19 @@ ggplot(
   )
 ) +
   geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  geom_text(
+    aes(
+      label = scales::comma(Patients_Per_GP_FTE, accuracy = 1),
+      group = `Population basis`
+    ),
+    position = position_dodge(width = 0.78),
+    hjust = -0.12,
+    size = 3.5
+  ) +
   scale_x_continuous(
     labels = scales::label_comma(),
     limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.08))
+    expand = expansion(mult = c(0, 0.16))
   ) +
   scale_fill_manual(values = c(
     "Registered patients" = "#2166AC",
@@ -1066,6 +962,58 @@ ggplot(
   theme_minimal(base_size = 12) +
   theme(
     legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r patients-per-gp-region-percentage-difference, fig.height=6}
+gp_region_pct_plot <- patients_per_gp_region_snapshot %>%
+  mutate(
+    NHS_Region = reorder(NHS_Region, Pct_Difference_Per_GP_FTE),
+    Direction = if_else(
+      Pct_Difference_Per_GP_FTE >= 0,
+      "Registered basis higher",
+      "Registered basis lower"
+    )
+  )
+
+ggplot(
+  gp_region_pct_plot,
+  aes(
+    x = Pct_Difference_Per_GP_FTE,
+    y = NHS_Region,
+    fill = Direction
+  )
+) +
+  geom_vline(xintercept = 0, colour = "grey55") +
+  geom_col(width = 0.7) +
+  geom_text(
+    aes(
+      label = sprintf("%.1f%%", Pct_Difference_Per_GP_FTE),
+      hjust = if_else(Pct_Difference_Per_GP_FTE >= 0, -0.12, 1.12)
+    ),
+    size = 3.6
+  ) +
+  scale_x_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = expansion(mult = c(0.12, 0.15))
+  ) +
+  scale_fill_manual(values = c(
+    "Registered basis higher" = "#2166AC",
+    "Registered basis lower" = "#B2182B"
+  ), guide = "none") +
+  labs(
+    title = "Percentage difference in patients per qualified GP FTE by NHS England region",
+    subtitle = paste0(
+      "Registered-patient basis compared with ONS population, ",
+      format(snapshot_date, "%B %Y")
+    ),
+    x = "Percentage difference vs ONS basis",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank()
   )
@@ -1198,7 +1146,9 @@ regional_payment_scenario <- payment_by_practice %>%
     Payment_Per_Registered = Total_Payments / Registered,
     Payment_Per_ONS = Total_Payments / ONS,
     ONS_Adjusted_Payments = Payment_Per_Registered * ONS,
-    Potential_Reduction = Total_Payments - ONS_Adjusted_Payments
+    Potential_Reduction = Total_Payments - ONS_Adjusted_Payments,
+    Pct_Difference_Payment_Per_Person =
+      100 * (Payment_Per_Registered - Payment_Per_ONS) / Payment_Per_ONS
   )
 
 icb_payment_scenario <- payment_by_practice %>%
@@ -1337,10 +1287,22 @@ ggplot(
   )
 ) +
   geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  geom_text(
+    aes(
+      label = scales::label_currency(
+        prefix = "£",
+        accuracy = 0.01
+      )(Payment_Per_Person),
+      group = `Population basis`
+    ),
+    position = position_dodge(width = 0.78),
+    hjust = -0.12,
+    size = 3.4
+  ) +
   scale_x_continuous(
     labels = scales::label_currency(prefix = "£"),
     limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.08))
+    expand = expansion(mult = c(0, 0.20))
   ) +
   scale_fill_manual(values = c(
     "Registered population" = "#2166AC",
@@ -1361,6 +1323,55 @@ ggplot(
   theme_minimal(base_size = 12) +
   theme(
     legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+```{r regional-payment-per-person-percentage-difference, fig.height=6}
+payment_region_pct_plot <- regional_payment_scenario %>%
+  mutate(
+    NHS_Region = reorder(NHS_Region, Pct_Difference_Payment_Per_Person),
+    Direction = if_else(
+      Pct_Difference_Payment_Per_Person >= 0,
+      "Registered basis higher",
+      "Registered basis lower"
+    )
+  )
+
+ggplot(
+  payment_region_pct_plot,
+  aes(
+    x = Pct_Difference_Payment_Per_Person,
+    y = NHS_Region,
+    fill = Direction
+  )
+) +
+  geom_vline(xintercept = 0, colour = "grey55") +
+  geom_col(width = 0.7) +
+  geom_text(
+    aes(
+      label = sprintf("%.1f%%", Pct_Difference_Payment_Per_Person),
+      hjust = if_else(Pct_Difference_Payment_Per_Person >= 0, -0.12, 1.12)
+    ),
+    size = 3.6
+  ) +
+  scale_x_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = expansion(mult = c(0.15, 0.15))
+  ) +
+  scale_fill_manual(values = c(
+    "Registered basis higher" = "#2166AC",
+    "Registered basis lower" = "#B2182B"
+  ), guide = "none") +
+  labs(
+    title = "Percentage difference in payment per person by NHS England region",
+    subtitle = "Registered-patient denominator compared with ONS population denominator",
+    x = "Percentage difference vs ONS basis",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank()
   )
@@ -1538,4 +1549,3 @@ icb_payment_scenario %>%
 - LSOA-to-ICB and NHS-region lookup: ONS April 2026 lookup.
 - Practice-to-region lookup: payments2425.csv.
 - Practice-to-ICB mapping: detected from the available practice-level lookup, registered-patient snapshot, or workforce data and reconciled to the ICB26 lookup where possible.
-- Boundary maps: ONS Open Geography Portal generalised boundaries.

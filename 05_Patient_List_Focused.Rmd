@@ -146,7 +146,7 @@ first_matching_column <- function(data, exact = character(), regex = NULL) {
 
 # Scope and interpretation
 
-This report compares GP registered-patient counts with ONS population estimates for England from July 2015 onwards. Percentage difference is defined as:
+This report compares GP registered-patient counts with ONS population estimates for England from July 2015 onwards. ONS estimates are restricted to England. National and age/sex registered-patient series are practice-based and therefore include all patients registered with English GP practices. LSOA-derived analyses explicitly restrict registered patients to English residence LSOAs before IMD, NHS region and ICB aggregation. Percentage difference is defined as:
 
 \[
 100 \times \frac{\text{registered patients} - \text{ONS population}}{\text{ONS population}}
@@ -258,7 +258,7 @@ sex_snapshot <- age_sex_snapshot %>%
   ) %>%
   mutate(Pct_Difference = pct_difference(Registered, ONS))
 
-lsoa_july <- full_join(
+lsoa_july_all <- full_join(
   lsoa_registered_july,
   lsoa_ons_july,
   by = c("LSOA_Code", "Period")
@@ -270,10 +270,53 @@ lsoa_july <- full_join(
     Pct_Difference = pct_difference(Registered, ONS)
   )
 
-lsoa_july_geography <- lsoa_july %>%
+# Explicit England-resident subset for every LSOA-derived analysis.
+lsoa_july_england <- lsoa_july_all %>%
+  filter(grepl("^E01", LSOA_Code))
+
+# Quantify registered patients excluded from the England-resident LSOA subset.
+non_england_registered_snapshot <- lsoa_registered_july %>%
+  filter(
+    Period == snapshot_date,
+    !grepl("^E01", LSOA_Code)
+  ) %>%
+  mutate(
+    Residence_Group = case_when(
+      grepl("^W0", LSOA_Code) ~ "Wales",
+      TRUE ~ "Other non-English LSOA"
+    )
+  ) %>%
+  group_by(Residence_Group) %>%
+  summarise(
+    Registered = sum(Registered, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+registered_removed_wales <- non_england_registered_snapshot %>%
+  filter(Residence_Group == "Wales") %>%
+  summarise(Registered = sum(Registered, na.rm = TRUE)) %>%
+  pull(Registered)
+
+registered_removed_other <- non_england_registered_snapshot %>%
+  filter(Residence_Group == "Other non-English LSOA") %>%
+  summarise(Registered = sum(Registered, na.rm = TRUE)) %>%
+  pull(Registered)
+
+registered_removed_non_england <-
+  registered_removed_wales + registered_removed_other
+
+lsoa_registered_snapshot_total <- lsoa_registered_july %>%
+  filter(Period == snapshot_date) %>%
+  summarise(Registered = sum(Registered, na.rm = TRUE)) %>%
+  pull(Registered)
+
+registered_removed_non_england_pct <-
+  100 * registered_removed_non_england / lsoa_registered_snapshot_total
+
+lsoa_july_geography <- lsoa_july_england %>%
   inner_join(nhser_lookup, by = c("LSOA_Code" = "LSOA21CD"))
 
-imd_july <- lsoa_july %>%
+imd_july <- lsoa_july_england %>%
   inner_join(
     imd_lookup %>% mutate(IMD_Decile = as.integer(IMD_Decile)),
     by = "LSOA_Code"
@@ -613,6 +656,8 @@ comparison_bar(
   "IMD decile"
 )
 ```
+
+**England-resident LSOA scope:** all LSOA-derived analyses from this point use only English `E01...` LSOAs. At the `r format(snapshot_date, "%B %Y")` snapshot, this excludes **`r scales::comma(registered_removed_non_england)` registered patients** living in non-English LSOAs: **`r scales::comma(registered_removed_wales)` in Wales** and **`r scales::comma(registered_removed_other)` in other non-English LSOAs** (`r sprintf("%.2f%%", registered_removed_non_england_pct)` of registered patients in the LSOA dataset).
 
 ```{r imd-snapshot-table}
 imd_snapshot %>%
@@ -1735,7 +1780,7 @@ icb_payment_scenario %>%
 ## Data sources
 
 - GP registered-patient national, age, and sex data: Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1.
-- GP registered-patient LSOA data: Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1, including English and Welsh LSOAs for patients registered with English GP practices.
+- GP registered-patient LSOA data: Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1. The source pull includes English and Welsh LSOAs for patients registered with English GP practices; all LSOA-derived report analyses use an explicit English E01... subset, with excluded non-English registered patients reported below the first LSOA chart.
 - ONS population estimates: Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1, restricted to English LSOAs.
 - LSOA IMD: latest snapshot in Demography.Index_Of_Multiple_Deprivation_By_LSOA1.
 - GP workforce: NHS_Workforce.Practice_Level_Census_Data1, summing Measure_Value where Measure is TOTAL_GP_SEN_PTNR_FTE, TOTAL_GP_PTNR_PROV_FTE, TOTAL_GP_SAL_BY_PRAC_FTE, or TOTAL_GP_SAL_BY_OTH_FTE.

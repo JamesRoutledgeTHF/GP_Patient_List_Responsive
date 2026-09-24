@@ -968,10 +968,19 @@ ggplot(
   )
 ) +
   geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  geom_text(
+    aes(
+      label = scales::comma(Patients_Per_GP_FTE, accuracy = 1),
+      group = `Population basis`
+    ),
+    position = position_dodge(width = 0.78),
+    hjust = -0.12,
+    size = 3.0
+  ) +
   scale_x_continuous(
     labels = scales::label_comma(),
     limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.08))
+    expand = expansion(mult = c(0, 0.18))
   ) +
   scale_fill_manual(values = c(
     "Registered patients" = "#2166AC",
@@ -1190,11 +1199,11 @@ ggplot(
 ) +
   geom_col(width = 0.65) +
   geom_text(
-    aes(label = scales::label_currency(prefix = "£")(Payment_Per_Person)),
+    aes(label = scales::label_currency(prefix = "\u00A3")(Payment_Per_Person)),
     vjust = -0.3
   ) +
   scale_y_continuous(
-    labels = scales::label_currency(prefix = "£"),
+    labels = scales::label_currency(prefix = "\u00A3"),
     limits = c(0, NA),
     expand = expansion(mult = c(0, 0.12))
   ) +
@@ -1232,7 +1241,7 @@ ggplot(
   geom_text(
     aes(
       label = scales::label_currency(
-        prefix = "£",
+        prefix = "\u00A3",
         accuracy = 0.01
       )(Payment_Per_Person),
       group = `Population basis`
@@ -1242,7 +1251,7 @@ ggplot(
     size = 3.4
   ) +
   scale_x_continuous(
-    labels = scales::label_currency(prefix = "£"),
+    labels = scales::label_currency(prefix = "\u00A3"),
     limits = c(0, NA),
     expand = expansion(mult = c(0, 0.20))
   ) +
@@ -1332,7 +1341,7 @@ ggplot(
 ) +
   geom_col(position = position_dodge(width = 0.78), width = 0.7) +
   scale_x_continuous(
-    labels = scales::label_currency(prefix = "£"),
+    labels = scales::label_currency(prefix = "\u00A3"),
     limits = c(0, NA),
     expand = expansion(mult = c(0, 0.08))
   ) +

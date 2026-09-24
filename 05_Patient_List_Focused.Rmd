@@ -66,6 +66,9 @@ pct_difference <- function(registered, ons) {
   )
 }
 
+# Build the pound sign at render time to avoid escaped Unicode text in charts.
+gbp_symbol <- intToUtf8(163)
+
 comparison_bar <- function(
   data,
   category,
@@ -146,7 +149,7 @@ first_matching_column <- function(data, exact = character(), regex = NULL) {
 
 # Scope and interpretation
 
-This report compares GP registered-patient counts with ONS population estimates for England from July 2015 onwards. Percentage difference is defined as:
+This report compares GP registered-patient counts with ONS population estimates for England from July 2015 onwards. ONS estimates are restricted to England. National and age/sex registered-patient series are practice-based and therefore include all patients registered with English GP practices. LSOA-derived analyses explicitly restrict registered patients to English residence LSOAs before IMD, NHS region and ICB aggregation. Percentage difference is defined as:
 
 \[
 100 \times \frac{\text{registered patients} - \text{ONS population}}{\text{ONS population}}
@@ -258,7 +261,7 @@ sex_snapshot <- age_sex_snapshot %>%
   ) %>%
   mutate(Pct_Difference = pct_difference(Registered, ONS))
 
-lsoa_july <- full_join(
+lsoa_july_all <- full_join(
   lsoa_registered_july,
   lsoa_ons_july,
   by = c("LSOA_Code", "Period")
@@ -270,10 +273,53 @@ lsoa_july <- full_join(
     Pct_Difference = pct_difference(Registered, ONS)
   )
 
-lsoa_july_geography <- lsoa_july %>%
+# Explicit England-resident subset for every LSOA-derived analysis.
+lsoa_july_england <- lsoa_july_all %>%
+  filter(grepl("^E01", LSOA_Code))
+
+# Quantify registered patients excluded from the England-resident LSOA subset.
+non_england_registered_snapshot <- lsoa_registered_july %>%
+  filter(
+    Period == snapshot_date,
+    !grepl("^E01", LSOA_Code)
+  ) %>%
+  mutate(
+    Residence_Group = case_when(
+      grepl("^W0", LSOA_Code) ~ "Wales",
+      TRUE ~ "Other non-English LSOA"
+    )
+  ) %>%
+  group_by(Residence_Group) %>%
+  summarise(
+    Registered = sum(Registered, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+registered_removed_wales <- non_england_registered_snapshot %>%
+  filter(Residence_Group == "Wales") %>%
+  summarise(Registered = sum(Registered, na.rm = TRUE)) %>%
+  pull(Registered)
+
+registered_removed_other <- non_england_registered_snapshot %>%
+  filter(Residence_Group == "Other non-English LSOA") %>%
+  summarise(Registered = sum(Registered, na.rm = TRUE)) %>%
+  pull(Registered)
+
+registered_removed_non_england <-
+  registered_removed_wales + registered_removed_other
+
+lsoa_registered_snapshot_total <- lsoa_registered_july %>%
+  filter(Period == snapshot_date) %>%
+  summarise(Registered = sum(Registered, na.rm = TRUE)) %>%
+  pull(Registered)
+
+registered_removed_non_england_pct <-
+  100 * registered_removed_non_england / lsoa_registered_snapshot_total
+
+lsoa_july_geography <- lsoa_july_england %>%
   inner_join(nhser_lookup, by = c("LSOA_Code" = "LSOA21CD"))
 
-imd_july <- lsoa_july %>%
+imd_july <- lsoa_july_england %>%
   inner_join(
     imd_lookup %>% mutate(IMD_Decile = as.integer(IMD_Decile)),
     by = "LSOA_Code"
@@ -614,6 +660,8 @@ comparison_bar(
 )
 ```
 
+**England-resident LSOA scope:** all LSOA-derived analyses from this point use only English `E01...` LSOAs. At the `r format(snapshot_date, "%B %Y")` snapshot, this excludes **`r scales::comma(registered_removed_non_england)` registered patients** living in non-English LSOAs: **`r scales::comma(registered_removed_wales)` in Wales** and **`r scales::comma(registered_removed_other)` in other non-English LSOAs** (`r sprintf("%.2f%%", registered_removed_non_england_pct)` of registered patients in the LSOA dataset).
+
 ```{r imd-snapshot-table}
 imd_snapshot %>%
   arrange(IMD_Decile) %>%
@@ -862,31 +910,57 @@ ggplot(
 
 ## NHS England regions
 
-```{r patients-per-gp-region-bars, fig.height=7}
-ggplot(
-  patients_per_gp_region_long,
-  aes(
-    x = Patients_Per_GP_FTE,
-    y = NHS_Region,
-    fill = `Population basis`
+```{r patients-per-gp-region-dumbbell, fig.height=7}
+gp_region_dumbbell <- patients_per_gp_region_snapshot %>%
+  mutate(
+    NHS_Region = reorder(NHS_Region, Registered_Per_GP_FTE)
   )
+
+ggplot(
+  gp_region_dumbbell,
+  aes(y = NHS_Region)
 ) +
-  geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  geom_segment(
+    aes(
+      x = ONS_Per_GP_FTE,
+      xend = Registered_Per_GP_FTE,
+      yend = NHS_Region
+    ),
+    colour = "grey65",
+    linewidth = 0.9
+  ) +
+  geom_point(
+    aes(x = Registered_Per_GP_FTE, colour = "Registered patients"),
+    size = 3
+  ) +
+  geom_point(
+    aes(x = ONS_Per_GP_FTE, colour = "ONS population"),
+    size = 3
+  ) +
   geom_text(
     aes(
-      label = scales::comma(Patients_Per_GP_FTE, accuracy = 1),
-      group = `Population basis`
+      x = Registered_Per_GP_FTE,
+      label = scales::comma(Registered_Per_GP_FTE, accuracy = 1)
     ),
-    position = position_dodge(width = 0.78),
     hjust = -0.12,
-    size = 3.5
+    vjust = -0.7,
+    size = 3.4
+  ) +
+  geom_text(
+    aes(
+      x = ONS_Per_GP_FTE,
+      label = scales::comma(ONS_Per_GP_FTE, accuracy = 1)
+    ),
+    hjust = -0.12,
+    vjust = 1.25,
+    size = 3.4
   ) +
   scale_x_continuous(
     labels = scales::label_comma(),
     limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.16))
+    expand = expansion(mult = c(0, 0.18))
   ) +
-  scale_fill_manual(values = c(
+  scale_colour_manual(values = c(
     "Registered patients" = "#2166AC",
     "ONS population" = "#B2182B"
   )) +
@@ -895,7 +969,7 @@ ggplot(
     subtitle = format(snapshot_date, "%B %Y"),
     x = "Patients per GP FTE",
     y = NULL,
-    fill = NULL
+    colour = NULL
   ) +
   theme_minimal(base_size = 12) +
   theme(
@@ -958,31 +1032,57 @@ ggplot(
 
 ## Integrated care boards
 
-```{r patients-per-gp-icb-bars, fig.height=13}
-ggplot(
-  patients_per_gp_icb_long,
-  aes(
-    x = Patients_Per_GP_FTE,
-    y = ICB,
-    fill = `Population basis`
+```{r patients-per-gp-icb-dumbbell, fig.height=13}
+gp_icb_dumbbell <- patients_per_gp_icb_snapshot %>%
+  mutate(
+    ICB = reorder(ICB, Registered_Per_GP_FTE)
   )
+
+ggplot(
+  gp_icb_dumbbell,
+  aes(y = ICB)
 ) +
-  geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  geom_segment(
+    aes(
+      x = ONS_Per_GP_FTE,
+      xend = Registered_Per_GP_FTE,
+      yend = ICB
+    ),
+    colour = "grey65",
+    linewidth = 0.8
+  ) +
+  geom_point(
+    aes(x = Registered_Per_GP_FTE, colour = "Registered patients"),
+    size = 2.5
+  ) +
+  geom_point(
+    aes(x = ONS_Per_GP_FTE, colour = "ONS population"),
+    size = 2.5
+  ) +
   geom_text(
     aes(
-      label = scales::comma(Patients_Per_GP_FTE, accuracy = 1),
-      group = `Population basis`
+      x = Registered_Per_GP_FTE,
+      label = scales::comma(Registered_Per_GP_FTE, accuracy = 1)
     ),
-    position = position_dodge(width = 0.78),
-    hjust = -0.12,
-    size = 3.0
+    hjust = -0.10,
+    vjust = -0.7,
+    size = 2.8
+  ) +
+  geom_text(
+    aes(
+      x = ONS_Per_GP_FTE,
+      label = scales::comma(ONS_Per_GP_FTE, accuracy = 1)
+    ),
+    hjust = -0.10,
+    vjust = 1.25,
+    size = 2.8
   ) +
   scale_x_continuous(
     labels = scales::label_comma(),
     limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.18))
+    expand = expansion(mult = c(0, 0.20))
   ) +
-  scale_fill_manual(values = c(
+  scale_colour_manual(values = c(
     "Registered patients" = "#2166AC",
     "ONS population" = "#B2182B"
   )) +
@@ -991,7 +1091,7 @@ ggplot(
     subtitle = format(snapshot_date, "%B %Y"),
     x = "Patients per GP FTE",
     y = NULL,
-    fill = NULL
+    colour = NULL
   ) +
   theme_minimal(base_size = 10) +
   theme(
@@ -1228,34 +1328,66 @@ ggplot(
 
 ## Payment per person by NHS England region
 
-```{r regional-payment-per-person-chart, fig.height=7}
-ggplot(
-  regional_payment_long,
-  aes(
-    x = Payment_Per_Person,
-    y = NHS_Region,
-    fill = `Population basis`
+```{r regional-payment-per-person-dumbbell, fig.height=7}
+regional_payment_dumbbell <- regional_payment_scenario %>%
+  mutate(
+    NHS_Region = reorder(NHS_Region, Payment_Per_Registered)
   )
+
+ggplot(
+  regional_payment_dumbbell,
+  aes(y = NHS_Region)
 ) +
-  geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  geom_segment(
+    aes(
+      x = Payment_Per_ONS,
+      xend = Payment_Per_Registered,
+      yend = NHS_Region
+    ),
+    colour = "grey65",
+    linewidth = 0.9
+  ) +
+  geom_point(
+    aes(x = Payment_Per_Registered, colour = "Registered population"),
+    size = 3
+  ) +
+  geom_point(
+    aes(x = Payment_Per_ONS, colour = "ONS population"),
+    size = 3
+  ) +
   geom_text(
     aes(
-      label = scales::label_currency(
-        prefix = "\u00A3",
-        accuracy = 0.01
-      )(Payment_Per_Person),
-      group = `Population basis`
+      x = Payment_Per_Registered,
+      label = paste0(
+        gbp_symbol,
+        scales::number(Payment_Per_Registered, accuracy = 0.01)
+      )
     ),
-    position = position_dodge(width = 0.78),
     hjust = -0.12,
-    size = 3.4
+    vjust = -0.7,
+    size = 3.3
+  ) +
+  geom_text(
+    aes(
+      x = Payment_Per_ONS,
+      label = paste0(
+        gbp_symbol,
+        scales::number(Payment_Per_ONS, accuracy = 0.01)
+      )
+    ),
+    hjust = -0.12,
+    vjust = 1.25,
+    size = 3.3
   ) +
   scale_x_continuous(
-    labels = scales::label_currency(prefix = "\u00A3"),
+    labels = function(x) paste0(
+      gbp_symbol,
+      scales::number(x, accuracy = 1)
+    ),
     limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.20))
+    expand = expansion(mult = c(0, 0.22))
   ) +
-  scale_fill_manual(values = c(
+  scale_colour_manual(values = c(
     "Registered population" = "#2166AC",
     "ONS population" = "#B2182B"
   )) +
@@ -1269,7 +1401,7 @@ ggplot(
     ),
     x = "Payment per person",
     y = NULL,
-    fill = NULL
+    colour = NULL
   ) +
   theme_minimal(base_size = 12) +
   theme(
@@ -1330,34 +1462,66 @@ ggplot(
 
 ## Payment per person by integrated care board
 
-```{r icb-payment-per-person-chart, fig.height=13}
-ggplot(
-  icb_payment_long,
-  aes(
-    x = Payment_Per_Person,
-    y = ICB,
-    fill = `Population basis`
+```{r icb-payment-per-person-dumbbell, fig.height=13}
+icb_payment_dumbbell <- icb_payment_scenario %>%
+  mutate(
+    ICB = reorder(ICB, Payment_Per_Registered)
   )
+
+ggplot(
+  icb_payment_dumbbell,
+  aes(y = ICB)
 ) +
-  geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  geom_segment(
+    aes(
+      x = Payment_Per_ONS,
+      xend = Payment_Per_Registered,
+      yend = ICB
+    ),
+    colour = "grey65",
+    linewidth = 0.8
+  ) +
+  geom_point(
+    aes(x = Payment_Per_Registered, colour = "Registered population"),
+    size = 2.5
+  ) +
+  geom_point(
+    aes(x = Payment_Per_ONS, colour = "ONS population"),
+    size = 2.5
+  ) +
   geom_text(
     aes(
-      label = scales::label_currency(
-        prefix = "\u00A3",
-        accuracy = 0.01
-      )(Payment_Per_Person),
-      group = `Population basis`
+      x = Payment_Per_Registered,
+      label = paste0(
+        gbp_symbol,
+        scales::number(Payment_Per_Registered, accuracy = 0.01)
+      )
     ),
-    position = position_dodge(width = 0.78),
-    hjust = -0.12,
-    size = 3.0
+    hjust = -0.10,
+    vjust = -0.7,
+    size = 2.7
+  ) +
+  geom_text(
+    aes(
+      x = Payment_Per_ONS,
+      label = paste0(
+        gbp_symbol,
+        scales::number(Payment_Per_ONS, accuracy = 0.01)
+      )
+    ),
+    hjust = -0.10,
+    vjust = 1.25,
+    size = 2.7
   ) +
   scale_x_continuous(
-    labels = scales::label_currency(prefix = "\u00A3"),
+    labels = function(x) paste0(
+      gbp_symbol,
+      scales::number(x, accuracy = 1)
+    ),
     limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.20))
+    expand = expansion(mult = c(0, 0.24))
   ) +
-  scale_fill_manual(values = c(
+  scale_colour_manual(values = c(
     "Registered population" = "#2166AC",
     "ONS population" = "#B2182B"
   )) +
@@ -1371,7 +1535,7 @@ ggplot(
     ),
     x = "Payment per person",
     y = NULL,
-    fill = NULL
+    colour = NULL
   ) +
   theme_minimal(base_size = 10) +
   theme(
@@ -1480,95 +1644,67 @@ regional_payment_impact <- regional_payment_scenario %>%
     Payment_Change = Modelled_Payments - Total_Payments,
     Payment_Change_Pct =
       100 * Payment_Change / Total_Payments,
-    Reduction_Label = if_else(
-      Payment_Change <= 0,
-      paste0(
-        "-",
-        scales::label_currency(
-          prefix = "\\u00A3",
-          scale = 1e-6,
-          suffix = "m",
-          accuracy = 0.1
-        )(abs(Payment_Change)),
-        " (",
-        sprintf("%.1f%%", abs(Payment_Change_Pct)),
-        ")"
+    NHS_Region = reorder(NHS_Region, abs(Payment_Change)),
+    Change_Label = paste0(
+      case_when(
+        Payment_Change < 0 ~ "-",
+        Payment_Change > 0 ~ "+",
+        TRUE ~ ""
       ),
-      paste0(
-        "+",
-        scales::label_currency(
-          prefix = "\\u00A3",
-          scale = 1e-6,
-          suffix = "m",
-          accuracy = 0.1
-        )(Payment_Change),
-        " (",
-        sprintf("%.1f%%", Payment_Change_Pct),
-        ")"
-      )
+      gbp_symbol,
+      scales::number(
+        abs(Payment_Change) / 1e6,
+        accuracy = 0.1
+      ),
+      "m (",
+      sprintf("%.1f%%", abs(Payment_Change_Pct)),
+      ")"
     )
-  ) %>%
-  arrange(Total_Payments) %>%
-  mutate(NHS_Region = factor(NHS_Region, levels = NHS_Region))
-
-regional_payment_impact_long <- regional_payment_impact %>%
-  select(
-    NHS_Region,
-    `Current payments` = Total_Payments,
-    `Modelled payments at ONS population` = Modelled_Payments
-  ) %>%
-  pivot_longer(
-    -NHS_Region,
-    names_to = "Scenario",
-    values_to = "Payments"
   )
 
 ggplot(
-  regional_payment_impact_long,
-  aes(
-    x = Payments,
-    y = NHS_Region,
-    fill = Scenario
-  )
+  regional_payment_impact,
+  aes(y = NHS_Region)
 ) +
-  geom_col(position = position_dodge(width = 0.78), width = 0.7) +
-  geom_text(
+  geom_segment(
     aes(
-      label = scales::label_currency(
-        prefix = "\\u00A3",
-        scale = 1e-9,
-        suffix = "bn",
-        accuracy = 0.01
-      )(Payments),
-      group = Scenario
+      x = Total_Payments,
+      xend = Modelled_Payments,
+      yend = NHS_Region
     ),
-    position = position_dodge(width = 0.78),
-    hjust = -0.10,
-    size = 3.2
+    linewidth = 0.9,
+    colour = "grey65"
+  ) +
+  geom_point(
+    aes(x = Total_Payments, colour = "Current payments"),
+    size = 3
+  ) +
+  geom_point(
+    aes(
+      x = Modelled_Payments,
+      colour = "Modelled payments at ONS population"
+    ),
+    size = 3
   ) +
   geom_text(
-    data = regional_payment_impact,
     aes(
       x = pmax(Total_Payments, Modelled_Payments),
-      y = NHS_Region,
-      label = Reduction_Label
+      label = Change_Label
     ),
-    inherit.aes = FALSE,
-    hjust = -0.05,
-    vjust = -1.25,
+    hjust = -0.08,
     size = 3.2,
     fontface = "bold"
   ) +
   scale_x_continuous(
-    labels = scales::label_currency(
-      prefix = "\\u00A3",
-      scale = 1e-9,
-      suffix = "bn"
+    labels = function(x) paste0(
+      gbp_symbol,
+      scales::number(x / 1e9, accuracy = 0.01),
+      "bn"
     ),
     limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.28))
+    expand = expansion(mult = c(0, 0.30))
   ) +
-  scale_fill_manual(values = c(
+  scale_colour_manual(values = c(
     "Current payments" = "#2166AC",
     "Modelled payments at ONS population" = "#B2182B"
   )) +
@@ -1577,7 +1713,7 @@ ggplot(
     subtitle = "Modelled payments hold current payment per registered patient constant and apply it to the ONS population",
     x = "Total payments",
     y = NULL,
-    fill = NULL
+    colour = NULL
   ) +
   theme_minimal(base_size = 11) +
   theme(
@@ -1597,32 +1733,20 @@ icb_payment_impact <- icb_payment_scenario %>%
     Payment_Change_Pct =
       100 * Payment_Change / Total_Payments,
     ICB = reorder(ICB, abs(Payment_Change)),
-    Change_Label = if_else(
-      Payment_Change <= 0,
-      paste0(
-        "-",
-        scales::label_currency(
-          prefix = "\\u00A3",
-          scale = 1e-6,
-          suffix = "m",
-          accuracy = 0.1
-        )(abs(Payment_Change)),
-        " (",
-        sprintf("%.1f%%", abs(Payment_Change_Pct)),
-        ")"
+    Change_Label = paste0(
+      case_when(
+        Payment_Change < 0 ~ "-",
+        Payment_Change > 0 ~ "+",
+        TRUE ~ ""
       ),
-      paste0(
-        "+",
-        scales::label_currency(
-          prefix = "\\u00A3",
-          scale = 1e-6,
-          suffix = "m",
-          accuracy = 0.1
-        )(Payment_Change),
-        " (",
-        sprintf("%.1f%%", Payment_Change_Pct),
-        ")"
-      )
+      gbp_symbol,
+      scales::number(
+        abs(Payment_Change) / 1e6,
+        accuracy = 0.1
+      ),
+      "m (",
+      sprintf("%.1f%%", abs(Payment_Change_Pct)),
+      ")"
     )
   )
 
@@ -1659,13 +1783,13 @@ ggplot(
     size = 2.8
   ) +
   scale_x_continuous(
-    labels = scales::label_currency(
-      prefix = "\\u00A3",
-      scale = 1e-6,
-      suffix = "m"
+    labels = function(x) paste0(
+      gbp_symbol,
+      scales::number(x / 1e6, accuracy = 0.1),
+      "m"
     ),
     limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.30))
+    expand = expansion(mult = c(0, 0.32))
   ) +
   scale_colour_manual(values = c(
     "Current payments" = "#2166AC",
@@ -1735,7 +1859,7 @@ icb_payment_scenario %>%
 ## Data sources
 
 - GP registered-patient national, age, and sex data: Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1.
-- GP registered-patient LSOA data: Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1, including English and Welsh LSOAs for patients registered with English GP practices.
+- GP registered-patient LSOA data: Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1. The source pull includes English and Welsh LSOAs for patients registered with English GP practices; all LSOA-derived report analyses use an explicit English E01... subset, with excluded non-English registered patients reported below the first LSOA chart.
 - ONS population estimates: Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1, restricted to English LSOAs.
 - LSOA IMD: latest snapshot in Demography.Index_Of_Multiple_Deprivation_By_LSOA1.
 - GP workforce: NHS_Workforce.Practice_Level_Census_Data1, summing Measure_Value where Measure is TOTAL_GP_SEN_PTNR_FTE, TOTAL_GP_PTNR_PROV_FTE, TOTAL_GP_SAL_BY_PRAC_FTE, or TOTAL_GP_SAL_BY_OTH_FTE.

@@ -44,7 +44,6 @@ national_registered <- DBI::dbGetQuery(
     FROM Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1
     WHERE Effective_Snapshot_Date >= '{start_sql}'
       AND Effective_Snapshot_Date <= '{end_sql}'
-      AND UPPER(Sex) IN ('FEMALE', 'MALE')
     GROUP BY Effective_Snapshot_Date
     ORDER BY Effective_Snapshot_Date
   ")

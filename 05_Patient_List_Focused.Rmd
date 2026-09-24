@@ -1486,7 +1486,7 @@ icb_payment_scenario %>%
 - GP registered-patient LSOA data: Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1, including English and Welsh LSOAs for patients registered with English GP practices.
 - ONS population estimates: Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1, restricted to English LSOAs.
 - LSOA IMD: latest snapshot in Demography.Index_Of_Multiple_Deprivation_By_LSOA1.
-- GP workforce: NHS_Workforce.Practice_Level_Census_Data_High_Level1; Staff_Group = GP, Measure = FTE, using Measure_Value for Salaried By Practice, Salaried By Other, Partner/Provider, and Senior Partner.
+- GP workforce: NHS_Workforce.Practice_Level_Census_Data1, summing Measure_Value where Measure is TOTAL_GP_SEN_PTNR_FTE, TOTAL_GP_PTNR_PROV_FTE, TOTAL_GP_SAL_BY_PRAC_FTE, or TOTAL_GP_SAL_BY_OTH_FTE.
 - GP payments: NHS_Payments_To_GP_Practices.Figures1 via 03_Payments_To_GP_Practice.R.
 - LSOA-to-ICB lookup: official ONS April 2024 LSOA21-to-SICBL24-to-ICB24 lookup; NHS England region is added from the official ONS 2024 ICB24-to-NHSER24 relationship.
 - Practice-to-region lookup: payments2425.csv.

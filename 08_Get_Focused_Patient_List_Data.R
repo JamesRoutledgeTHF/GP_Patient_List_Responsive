@@ -138,7 +138,10 @@ lsoa_registered_july <- DBI::dbGetQuery(
       SUM(Size) AS Registered
     FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
     WHERE Effective_Snapshot_Date = '{snapshot_sql}'
-      AND LSOA_Code LIKE 'E01%'
+      AND (
+        LSOA_Code LIKE 'E01%'
+        OR LSOA_Code LIKE 'W0%'
+      )
     GROUP BY LSOA_Code, Effective_Snapshot_Date
   ")
 ) %>%
@@ -193,24 +196,20 @@ qualified_gp_workforce <- DBI::dbGetQuery(
   con,
   glue::glue("
     SELECT
-      Practice_Name,
       Practice_Code,
       Effective_Snapshot_Date AS Period,
       SUM(TRY_CAST(Measure_Value AS FLOAT)) AS GP_FTE
-    FROM NHS_Workforce.Practice_Level_Census_Data_High_Level1
+    FROM NHS_Workforce.Practice_Level_Census_Data1
     WHERE Effective_Snapshot_Date >= '{start_sql}'
       AND Effective_Snapshot_Date <= '{end_sql}'
-      AND Staff_Group = 'GP'
-      AND Measure = 'FTE'
-      AND Detailed_Staff_Role IN (
-        'Salaried By Practice',
-        'Salaried By Other',
-        'Partner/Provider',
-        'Senior Partner'
+      AND Measure IN (
+        'TOTAL_GP_SEN_PTNR_FTE',
+        'TOTAL_GP_PTNR_PROV_FTE',
+        'TOTAL_GP_SAL_BY_PRAC_FTE',
+        'TOTAL_GP_SAL_BY_OTH_FTE'
       )
       AND Practice_Code IS NOT NULL
     GROUP BY
-      Practice_Name,
       Practice_Code,
       Effective_Snapshot_Date
     ORDER BY
@@ -219,7 +218,6 @@ qualified_gp_workforce <- DBI::dbGetQuery(
   ")
 ) %>%
   dplyr::mutate(
-    Practice_Name = as.character(Practice_Name),
     Practice_Code = as.character(Practice_Code),
     Period = as.Date(Period),
     GP_FTE = as.numeric(GP_FTE)

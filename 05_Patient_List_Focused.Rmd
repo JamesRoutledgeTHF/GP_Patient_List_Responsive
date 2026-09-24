@@ -1340,10 +1340,22 @@ ggplot(
   )
 ) +
   geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  geom_text(
+    aes(
+      label = scales::label_currency(
+        prefix = "\u00A3",
+        accuracy = 0.01
+      )(Payment_Per_Person),
+      group = `Population basis`
+    ),
+    position = position_dodge(width = 0.78),
+    hjust = -0.12,
+    size = 3.0
+  ) +
   scale_x_continuous(
     labels = scales::label_currency(prefix = "\u00A3"),
     limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.08))
+    expand = expansion(mult = c(0, 0.20))
   ) +
   scale_fill_manual(values = c(
     "Registered population" = "#2166AC",

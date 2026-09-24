@@ -1455,6 +1455,237 @@ ggplot(
   theme(panel.grid.major.y = element_blank())
 ```
 
+## Illustrative payment impact if registered lists converged to ONS population
+
+The payment-per-person charts above hold total payments fixed and change only the population denominator. The following charts show a different scenario: total payments are allowed to change with patient numbers.
+
+For each geography, the current payment per registered patient is held constant and applied to the ONS population:
+
+\[
+\text{Modelled payments}
+=
+\text{Current payments}
+\times
+\frac{\text{ONS population}}{\text{Registered patients}}
+\]
+
+The modelled change is therefore the difference between current payments and this ONS-population-based payment total. This is an illustrative proportional-payment scenario, not a forecast of the actual contractual payment change that would occur if practice lists fell.
+
+### Current and modelled payments by NHS England region
+
+```{r regional-current-vs-modelled-payments, fig.height=7}
+regional_payment_impact <- regional_payment_scenario %>%
+  mutate(
+    Modelled_Payments = ONS_Adjusted_Payments,
+    Payment_Change = Modelled_Payments - Total_Payments,
+    Payment_Change_Pct =
+      100 * Payment_Change / Total_Payments,
+    Reduction_Label = if_else(
+      Payment_Change <= 0,
+      paste0(
+        "-",
+        scales::label_currency(
+          prefix = "\\u00A3",
+          scale = 1e-6,
+          suffix = "m",
+          accuracy = 0.1
+        )(abs(Payment_Change)),
+        " (",
+        sprintf("%.1f%%", abs(Payment_Change_Pct)),
+        ")"
+      ),
+      paste0(
+        "+",
+        scales::label_currency(
+          prefix = "\\u00A3",
+          scale = 1e-6,
+          suffix = "m",
+          accuracy = 0.1
+        )(Payment_Change),
+        " (",
+        sprintf("%.1f%%", Payment_Change_Pct),
+        ")"
+      )
+    )
+  ) %>%
+  arrange(Total_Payments) %>%
+  mutate(NHS_Region = factor(NHS_Region, levels = NHS_Region))
+
+regional_payment_impact_long <- regional_payment_impact %>%
+  select(
+    NHS_Region,
+    `Current payments` = Total_Payments,
+    `Modelled payments at ONS population` = Modelled_Payments
+  ) %>%
+  pivot_longer(
+    -NHS_Region,
+    names_to = "Scenario",
+    values_to = "Payments"
+  )
+
+ggplot(
+  regional_payment_impact_long,
+  aes(
+    x = Payments,
+    y = NHS_Region,
+    fill = Scenario
+  )
+) +
+  geom_col(position = position_dodge(width = 0.78), width = 0.7) +
+  geom_text(
+    aes(
+      label = scales::label_currency(
+        prefix = "\\u00A3",
+        scale = 1e-9,
+        suffix = "bn",
+        accuracy = 0.01
+      )(Payments),
+      group = Scenario
+    ),
+    position = position_dodge(width = 0.78),
+    hjust = -0.10,
+    size = 3.2
+  ) +
+  geom_text(
+    data = regional_payment_impact,
+    aes(
+      x = pmax(Total_Payments, Modelled_Payments),
+      y = NHS_Region,
+      label = Reduction_Label
+    ),
+    inherit.aes = FALSE,
+    hjust = -0.05,
+    vjust = -1.25,
+    size = 3.2,
+    fontface = "bold"
+  ) +
+  scale_x_continuous(
+    labels = scales::label_currency(
+      prefix = "\\u00A3",
+      scale = 1e-9,
+      suffix = "bn"
+    ),
+    limits = c(0, NA),
+    expand = expansion(mult = c(0, 0.28))
+  ) +
+  scale_fill_manual(values = c(
+    "Current payments" = "#2166AC",
+    "Modelled payments at ONS population" = "#B2182B"
+  )) +
+  labs(
+    title = "Current and modelled payments by NHS England region",
+    subtitle = "Modelled payments hold current payment per registered patient constant and apply it to the ONS population",
+    x = "Total payments",
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+### Current and modelled payments by NHS integrated care board
+
+```{r icb-current-vs-modelled-payments, fig.height=13}
+icb_payment_impact <- icb_payment_scenario %>%
+  mutate(
+    Modelled_Payments = ONS_Adjusted_Payments,
+    Payment_Change = Modelled_Payments - Total_Payments,
+    Payment_Change_Pct =
+      100 * Payment_Change / Total_Payments,
+    ICB = reorder(ICB, abs(Payment_Change)),
+    Change_Label = if_else(
+      Payment_Change <= 0,
+      paste0(
+        "-",
+        scales::label_currency(
+          prefix = "\\u00A3",
+          scale = 1e-6,
+          suffix = "m",
+          accuracy = 0.1
+        )(abs(Payment_Change)),
+        " (",
+        sprintf("%.1f%%", abs(Payment_Change_Pct)),
+        ")"
+      ),
+      paste0(
+        "+",
+        scales::label_currency(
+          prefix = "\\u00A3",
+          scale = 1e-6,
+          suffix = "m",
+          accuracy = 0.1
+        )(Payment_Change),
+        " (",
+        sprintf("%.1f%%", Payment_Change_Pct),
+        ")"
+      )
+    )
+  )
+
+ggplot(
+  icb_payment_impact,
+  aes(y = ICB)
+) +
+  geom_segment(
+    aes(
+      x = Total_Payments,
+      xend = Modelled_Payments,
+      yend = ICB
+    ),
+    linewidth = 0.8,
+    colour = "grey65"
+  ) +
+  geom_point(
+    aes(x = Total_Payments, colour = "Current payments"),
+    size = 2.5
+  ) +
+  geom_point(
+    aes(
+      x = Modelled_Payments,
+      colour = "Modelled payments at ONS population"
+    ),
+    size = 2.5
+  ) +
+  geom_text(
+    aes(
+      x = pmax(Total_Payments, Modelled_Payments),
+      label = Change_Label
+    ),
+    hjust = -0.08,
+    size = 2.8
+  ) +
+  scale_x_continuous(
+    labels = scales::label_currency(
+      prefix = "\\u00A3",
+      scale = 1e-6,
+      suffix = "m"
+    ),
+    limits = c(0, NA),
+    expand = expansion(mult = c(0, 0.30))
+  ) +
+  scale_colour_manual(values = c(
+    "Current payments" = "#2166AC",
+    "Modelled payments at ONS population" = "#B2182B"
+  )) +
+  labs(
+    title = "Current and modelled payments by NHS integrated care board",
+    subtitle = "The labelled difference is the illustrative payment change if registered lists converged to ONS population",
+    x = "Total payments",
+    y = NULL,
+    colour = NULL
+  ) +
+  theme_minimal(base_size = 9.5) +
+  theme(
+    legend.position = "top",
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
 ```{r payment-tables}
 national_payment_scenario %>%
   transmute(

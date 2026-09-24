@@ -41,10 +41,9 @@ national_registered <- DBI::dbGetQuery(
     SELECT
       Effective_Snapshot_Date AS Period,
       SUM(Size) AS Population
-    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
+    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1
     WHERE Effective_Snapshot_Date >= '{start_sql}'
       AND Effective_Snapshot_Date <= '{end_sql}'
-      AND LSOA_Code LIKE 'E01%'
     GROUP BY Effective_Snapshot_Date
     ORDER BY Effective_Snapshot_Date
   ")

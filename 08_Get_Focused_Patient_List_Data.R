@@ -138,7 +138,10 @@ lsoa_registered_july <- DBI::dbGetQuery(
       SUM(Size) AS Registered
     FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
     WHERE Effective_Snapshot_Date = '{snapshot_sql}'
-      AND LSOA_Code LIKE 'E01%'
+      AND (
+        LSOA_Code LIKE 'E01%'
+        OR LSOA_Code LIKE 'W0%'
+      )
     GROUP BY LSOA_Code, Effective_Snapshot_Date
   ")
 ) %>%

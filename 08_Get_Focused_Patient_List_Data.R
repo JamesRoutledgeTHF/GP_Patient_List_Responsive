@@ -163,7 +163,8 @@ imd_lookup <- DBI::dbGetQuery(
   "
     SELECT
       LSOA_Code,
-      MAX(IMD_Decile) AS IMD_Decile
+      MAX(IMD_Decile) AS IMD_Decile,
+      MAX(Effective_Snapshot_Date) AS IMD_Source_Date
     FROM Demography.Index_Of_Multiple_Deprivation_By_LSOA1
     WHERE Effective_Snapshot_Date = (
       SELECT MAX(Effective_Snapshot_Date)

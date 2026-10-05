@@ -34,6 +34,8 @@ source("01_connect_to_facts_and_dimensions.R")
 source("03_Payments_To_GP_Practice.R")
 source("06_Registered_Patients.R")
 source("07_Get_LSOA_Data.R")
+source("09_Get_LSOA_NHS_Region_Lookup.R")
+source("10_Get_Practice_Region_Lookup.R")
 
 payments2425 <- read.csv("payments2425.csv", stringsAsFactors = FALSE)
 
@@ -74,6 +76,41 @@ practice_change <- monthly_practice %>%
 #   ) +
 #   theme_minimal()
 
+```
+
+## GP practice totals compared with GP LSOA totals
+
+The table compares both GP registered-patient sources for July 2024. The GP LSOA total includes all residence codes before any ONS join or England-only filter. Difference is practice total minus GP LSOA total; the percentage uses the practice total as its denominator. This difference alone does not identify ghost patients.
+
+```{r practice-versus-lsoa-table, echo=FALSE}
+practice_lsoa_comparison <- monthly_overall %>%
+  mutate(Period = as.Date(Period)) %>%
+  select(Period, Practice_Total = Total_Size) %>%
+  inner_join(
+    LSOA_Patient_Reg %>%
+      transmute(Period = as.Date(Effective_Snapshot_Date), LSOA_Total = Total_Size),
+    by = "Period"
+  ) %>%
+  mutate(
+    Difference = Practice_Total - LSOA_Total,
+    Pct_Difference = if_else(
+      Practice_Total > 0, Difference / Practice_Total, NA_real_
+    )
+  )
+
+if (nrow(practice_lsoa_comparison) != 1L) {
+  stop("Both GP sources must have one matched July 2024 snapshot.")
+}
+
+practice_lsoa_comparison %>%
+  transmute(
+    Snapshot = format(Period, "%d %b %Y"),
+    `GP practice total` = comma(Practice_Total),
+    `GP LSOA total (all records)` = comma(LSOA_Total),
+    `Practice minus LSOA` = comma(Difference),
+    `Difference (% of practice total)` = percent(Pct_Difference, accuracy = 0.01)
+  ) %>%
+  kable(caption = "Overall difference between GP practice and GP LSOA list totals")
 ```
 
 When looking at the most recent ONS population estimates for LSOA (2024) against the same month Registered Patients (July 2024) we can see that the Registered Patients even then was larger than the ONS estimates.
@@ -571,7 +608,7 @@ overall_from_lsoa <- LSOA_ONS_all_year %>%
     .groups = "drop"
   ) %>%
   rename(Period = Effective_Snapshot_Date) %>%
-  mutate(Source = "LSOA total")
+  mutate(Source = "ONS population estimate")
 
 # Combine the two series
 overall_comparison <- bind_rows(
@@ -590,7 +627,7 @@ ggplot(overall_comparison,
   scale_colour_manual(
     values = c(
       "Practice-level total" = "steelblue",
-      "LSOA total" = "firebrick"
+      "ONS population estimate" = "firebrick"
     )
   ) +
   scale_y_continuous(
@@ -640,8 +677,8 @@ ggplot(overall_difference,
     date_labels = "%b %Y"
   ) +
   labs(
-    title = "Difference between LSOA and practice-level registered populations",
-    subtitle = "LSOA total minus practice-level total",
+    title = "Difference between GP practice totals and ONS population estimates",
+    subtitle = "Practice-level total minus ONS population estimate",
     x = NULL,
     y = "Difference in registered patients"
   ) +
@@ -1474,8 +1511,32 @@ Region_trends %>%
 
 ```{r, echo = FALSE}
 
-ICB_trends <- monthly_practice_finance %>%
-  filter(!is.na(ICB_Name)) %>%
+# Apply April 2026 ICB geography to the original monthly patient counts.
+# Report practices outside the original payments lookup separately.
+monthly_practice_icb26 <- monthly_practice %>%
+  left_join(practice_icb_lookup, by = c("GP_Practice_Code" = "Practice_Code"))
+
+unmapped_icb26_counts <- monthly_practice_icb26 %>%
+  filter(is.na(ICB), Period %in% as.Date(c("2025-10-01", "2026-06-01"))) %>%
+  group_by(Period) %>%
+  summarise(
+    Practices = n_distinct(GP_Practice_Code),
+    Patients = sum(Total_Size, na.rm = TRUE),
+    .groups = "drop"
+  )
+if (nrow(unmapped_icb26_counts) > 0) {
+  unmapped_icb26_counts %>%
+    transmute(
+      Month = format(Period, "%b %Y"),
+      `Unmapped practices` = Practices,
+      `Patients excluded from ICB rankings` = comma(Patients)
+    ) %>%
+    kable(caption = "Practices outside the original payments2425 geography lookup")
+}
+
+ICB_trends <- monthly_practice_icb26 %>%
+  filter(!is.na(ICB)) %>%
+  mutate(ICB_Name = ICB) %>%
   group_by(ICB_Name, Period) %>%
   summarise(
     Total_Patients = sum(Total_Size, na.rm = TRUE),
@@ -1532,7 +1593,7 @@ ggplot(
   coord_cartesian(clip = "off") +
   labs(
     title = "ICBs with the largest and smallest % change in registered patients",
-    subtitle = "Top 5 and bottom 5 ICBs (Oct 2025 to Jun 2026)",
+    subtitle = "April 2026 ICB structure; Oct 2025 to Jun 2026 counts",
     x = "Percentage change",
     y = "ICB"
   ) +
@@ -1549,7 +1610,7 @@ icb_top_bottom %>%
   ) %>%
   kable(
     align = c("l", "r", "r", "r", "r"),
-    caption = "Top and bottom 5 ICBs by percentage change in registered patients (Oct 2025 to Jun 2026)"
+    caption = "Top and bottom 5 ICBs by percentage change (April 2026 structure; Oct 2025 to Jun 2026)"
   )
 ```
 
@@ -2451,4 +2512,3 @@ ggplot() +
 #   arrange(desc(Percent_Change))
 
  ```
-

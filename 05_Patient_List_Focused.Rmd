@@ -316,6 +316,12 @@ lsoa_registered_snapshot_total <- lsoa_registered_july %>%
 registered_removed_non_england_pct <-
   100 * registered_removed_non_england / lsoa_registered_snapshot_total
 
+if (nrow(anti_join(
+  lsoa_july_england, nhser_lookup, by = c("LSOA_Code" = "LSOA21CD")
+)) > 0) {
+  stop("Some English LSOAs are missing from the April 2026 geography lookup.")
+}
+
 lsoa_july_geography <- lsoa_july_england %>%
   inner_join(nhser_lookup, by = c("LSOA_Code" = "LSOA21CD"))
 
@@ -345,7 +351,7 @@ imd_july <- lsoa_july_england %>%
   )
 
 region_july <- lsoa_july_geography %>%
-  group_by(Period, NHSER24CD, NHSER24NM) %>%
+  group_by(Period, NHSER26CD, NHSER26NM) %>%
   summarise(
     Registered = sum(Registered, na.rm = TRUE),
     ONS = sum(ONS, na.rm = TRUE),
@@ -357,7 +363,7 @@ region_july <- lsoa_july_geography %>%
   )
 
 icb_july <- lsoa_july_geography %>%
-  group_by(Period, ICB24CD, ICB24NM) %>%
+  group_by(Period, ICB26CD, ICB26NM) %>%
   summarise(
     Registered = sum(Registered, na.rm = TRUE),
     ONS = sum(ONS, na.rm = TRUE),
@@ -546,6 +552,43 @@ national_snapshot %>%
   knitr::kable(caption = "National population comparison")
 ```
 
+## GP practice totals compared with GP LSOA totals
+
+This compares both registered-patient sources at the same snapshot date. The GP LSOA total includes all residence codes, including Wales and unassigned/other records, before any ONS join or England-only filter. A positive difference means the practice-based total is larger. The difference alone does not identify ghost patients.
+
+```{r practice-versus-lsoa-table}
+practice_total_snapshot <- national_registered %>%
+  filter(Period == snapshot_date)
+
+if (nrow(practice_total_snapshot) != 1L ||
+    nrow(lsoa_registered_july %>% filter(Period == snapshot_date)) == 0L) {
+  stop("Both GP sources must have data for the requested snapshot date.")
+}
+
+practice_lsoa_comparison <- practice_total_snapshot %>%
+  transmute(
+    Period,
+    Practice_Total = Population,
+    LSOA_Total = lsoa_registered_snapshot_total,
+    Difference = Practice_Total - LSOA_Total,
+    Pct_Difference = if_else(
+      Practice_Total > 0, 100 * Difference / Practice_Total, NA_real_
+    )
+  )
+
+practice_lsoa_comparison %>%
+  transmute(
+    Snapshot = format(Period, "%d %b %Y"),
+    `GP practice total` = scales::comma(Practice_Total),
+    `GP LSOA total (all records)` = scales::comma(LSOA_Total),
+    `Practice minus LSOA` = scales::comma(Difference),
+    `Difference (% of practice total)` = sprintf("%.2f%%", Pct_Difference)
+  ) %>%
+  knitr::kable(caption = "Overall difference between GP practice and GP LSOA list totals")
+```
+
+Of the GP LSOA total, `r scales::comma(lsoa_registered_snapshot_total - registered_removed_non_england)` patients have an English LSOA, `r scales::comma(registered_removed_wales)` have a Welsh LSOA, and `r scales::comma(registered_removed_other)` have another or unassigned residence code. Later LSOA analyses use the English-LSOA subtotal.
+
 ## Age
 
 ```{r age-snapshot-chart, fig.height=6}
@@ -679,11 +722,11 @@ imd_snapshot %>%
 
 ```{r region-snapshot-chart, fig.height=6}
 region_snapshot_plot <- region_snapshot %>%
-  mutate(NHSER24NM = reorder(NHSER24NM, Pct_Difference))
+  mutate(NHSER26NM = reorder(NHSER26NM, Pct_Difference))
 
 comparison_bar(
   region_snapshot_plot,
-  NHSER24NM,
+  NHSER26NM,
   "Percentage difference by NHS England region",
   format(snapshot_date, "%B %Y"),
   "NHS England region"
@@ -694,7 +737,7 @@ comparison_bar(
 region_snapshot %>%
   arrange(desc(Pct_Difference)) %>%
   transmute(
-    `NHS England region` = NHSER24NM,
+    `NHS England region` = NHSER26NM,
     `Registered patients` = scales::comma(Registered),
     `ONS population` = scales::comma(ONS),
     `Raw difference` = scales::comma(Raw_Difference),
@@ -705,13 +748,15 @@ region_snapshot %>%
 
 # NHS integrated care boards
 
+All ICB comparisons use the April 2026 structure. The population snapshot remains July 2024. LSOA populations are reassigned through the official ONS April 2026 lookup, including the Frimley boundary changes. Practice counts, workforce and payments use the same 2026 ICB codes.
+
 ```{r icb-snapshot-chart, fig.height=12}
 icb_snapshot_plot <- icb_snapshot %>%
-  mutate(ICB24NM = reorder(ICB24NM, Pct_Difference))
+  mutate(ICB26NM = reorder(ICB26NM, Pct_Difference))
 
 comparison_bar(
   icb_snapshot_plot,
-  ICB24NM,
+  ICB26NM,
   "Percentage difference by NHS integrated care board",
   format(snapshot_date, "%B %Y"),
   "Integrated care board"
@@ -722,7 +767,7 @@ comparison_bar(
 icb_snapshot %>%
   arrange(desc(Pct_Difference)) %>%
   transmute(
-    ICB = ICB24NM,
+    ICB = ICB26NM,
     `Registered patients` = scales::comma(Registered),
     `ONS population` = scales::comma(ONS),
     `Raw difference` = scales::comma(Raw_Difference),
@@ -768,8 +813,8 @@ practice_region_registered <- practice_registered_snapshot %>%
 
 patients_per_gp_region_snapshot <- region_snapshot %>%
   transmute(
-    NHS_Region = normalise_region_name(NHSER24NM),
-    NHS_Region_Display = NHSER24NM,
+    NHS_Region = normalise_region_name(NHSER26NM),
+    NHS_Region_Display = NHSER26NM,
     ONS
   ) %>%
   full_join(practice_region_registered, by = "NHS_Region") %>%
@@ -794,8 +839,8 @@ practice_icb_registered <- practice_registered_snapshot %>%
 
 icb_population_snapshot <- icb_snapshot %>%
   transmute(
-    ICB_Key = normalise_icb_name(ICB24NM),
-    ICB_Population_Name = ICB24NM,
+    ICB_Key = ICB26CD,
+    ICB_Population_Name = ICB26NM,
     ONS
   )
 
@@ -1186,8 +1231,8 @@ regional_payment_scenario <- payment_by_practice %>%
   left_join(
     region_snapshot %>%
       transmute(
-        NHS_Region = normalise_region_name(NHSER24NM),
-        NHS_Region_Display = NHSER24NM,
+        NHS_Region = normalise_region_name(NHSER26NM),
+        NHS_Region_Display = NHSER26NM,
         ONS
       ),
     by = "NHS_Region"
@@ -1859,11 +1904,11 @@ icb_payment_scenario %>%
 ## Data sources
 
 - GP registered-patient national, age, and sex data: Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1.
-- GP registered-patient LSOA data: Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1. The source pull includes English and Welsh LSOAs for patients registered with English GP practices; all LSOA-derived report analyses use an explicit English E01... subset, with excluded non-English registered patients reported below the first LSOA chart.
+- GP registered-patient LSOA data: Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1. The source pull includes all residence codes for patients registered with English GP practices; all LSOA-derived report analyses use an explicit English E01... subset, with excluded non-English registered patients reported below the first LSOA chart.
 - ONS population estimates: Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1, restricted to English LSOAs.
 - LSOA IMD: latest snapshot in Demography.Index_Of_Multiple_Deprivation_By_LSOA1.
 - GP workforce: NHS_Workforce.Practice_Level_Census_Data1, summing Measure_Value where Measure is TOTAL_GP_SEN_PTNR_FTE, TOTAL_GP_PTNR_PROV_FTE, TOTAL_GP_SAL_BY_PRAC_FTE, or TOTAL_GP_SAL_BY_OTH_FTE.
 - GP payments: NHS_Payments_To_GP_Practices.Figures1 via 03_Payments_To_GP_Practice.R.
-- LSOA-to-ICB lookup: official ONS April 2024 LSOA21-to-SICBL24-to-ICB24 lookup; NHS England region is added from the official ONS 2024 ICB24-to-NHSER24 relationship.
+- LSOA-to-ICB lookup: [official ONS April 2026 LSOA21-to-SICBL26-to-ICB26-to-NHSER26 lookup](https://www.data.gov.uk/dataset/1d16e489-1dc8-443e-9e1c-15de4f961c6d/lsoa-2021-to-sicbl-to-icb-to-nhser-to-lad-april-2026-lookup-in-en), applied to the July 2024 source counts.
 - Practice-to-region lookup: payments2425.csv.
-- Practice-to-ICB mapping: taken directly from the Sub ICB fields in payments2425.csv; ONS geography is not used to assign practices to ICBs.
+- Practice-to-ICB mapping: retained Sub ICB codes in payments2425.csv mapped to April 2026 ICBs. Frimley transfers use the NHS May 2026 practice mapping; nine historical practices absent from that mapping use their recorded practice postcode in the ONS May 2026 directory. The postcode assignments are geographic estimates for closed practices, not confirmed commissioning relationships. See data/README.md for sources and methods.

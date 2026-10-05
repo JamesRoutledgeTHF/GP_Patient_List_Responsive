@@ -922,6 +922,73 @@ patients_per_gp_icb_long <- patients_per_gp_icb_long %>%
   mutate(ICB = factor(ICB, levels = icb_gp_order))
 ```
 
+## July 2024 national comparison
+
+```{r patients-per-gp-july-2024-bar, fig.width=8, fig.height=5}
+patients_per_gp_july_2024 <- patients_per_gp_july %>%
+  filter(Period == as.Date("2024-07-01"))
+
+expected_population_sources <- c(
+  "ONS population estimate", "Registered patients"
+)
+
+if (nrow(patients_per_gp_july_2024) != 2L ||
+    !setequal(patients_per_gp_july_2024$Source, expected_population_sources) ||
+    any(!is.finite(patients_per_gp_july_2024$GP_FTE)) ||
+    any(patients_per_gp_july_2024$GP_FTE <= 0) ||
+    n_distinct(patients_per_gp_july_2024$GP_FTE) != 1L ||
+    any(!is.finite(patients_per_gp_july_2024$Patients_Per_GP_FTE)) ||
+    any(patients_per_gp_july_2024$Patients_Per_GP_FTE < 0)) {
+  stop("The July 2024 bar chart requires both population sources and one positive qualified GP FTE total.")
+}
+
+patients_per_gp_july_2024 <- patients_per_gp_july_2024 %>%
+  mutate(Source = factor(Source, levels = expected_population_sources))
+
+ggplot(
+  patients_per_gp_july_2024,
+  aes(x = Source, y = Patients_Per_GP_FTE, fill = Source)
+) +
+  geom_col(width = 0.6) +
+  geom_text(
+    aes(label = scales::comma(Patients_Per_GP_FTE, accuracy = 1)),
+    vjust = -0.5,
+    size = 4
+  ) +
+  scale_fill_manual(values = c(
+    "ONS population estimate" = "#B2182B",
+    "Registered patients" = "#2166AC"
+  )) +
+  scale_x_discrete(labels = c(
+    "ONS population estimate" = "ONS population\nestimate",
+    "Registered patients" = "Registered\npatients"
+  )) +
+  scale_y_continuous(
+    limits = c(0, NA),
+    labels = scales::label_comma(),
+    expand = expansion(mult = c(0, 0.15))
+  ) +
+  labs(
+    title = "Patients per qualified GP FTE",
+    subtitle = "England, July 2024",
+    x = NULL,
+    y = "People per qualified GP FTE",
+    caption = paste0(
+      "Both bars use the same July 2024 qualified GP total: ",
+      scales::comma(patients_per_gp_july_2024$GP_FTE[1], accuracy = 0.1),
+      " FTE."
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "none",
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
+## July time series
+
 ```{r patients-per-gp-july-time-series}
 ggplot(
   patients_per_gp_july,

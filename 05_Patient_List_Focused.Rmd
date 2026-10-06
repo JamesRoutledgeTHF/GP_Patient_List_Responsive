@@ -147,16 +147,6 @@ first_matching_column <- function(data, exact = character(), regex = NULL) {
 }
 ```
 
-# Scope and interpretation
-
-This report compares GP registered-patient counts with ONS population estimates for England from July 2015 onwards. ONS estimates are restricted to England. National and age/sex registered-patient series are practice-based and therefore include all patients registered with English GP practices. LSOA-derived analyses explicitly restrict registered patients to English residence LSOAs before IMD, NHS region and ICB aggregation. Percentage difference is defined as:
-
-\[
-100 \times \frac{\text{registered patients} - \text{ONS population}}{\text{ONS population}}
-\]
-
-Positive values mean registered-patient counts exceed ONS estimates. Snapshot analyses use `r format(snapshot_date, "%B %Y")`.
-
 ```{r connect-and-load-data, include=FALSE}
 source("01_connect_to_facts_and_dimensions.R")
 source("03_Payments_To_GP_Practice.R")
@@ -164,6 +154,7 @@ source("08_Get_Focused_Patient_List_Data.R")
 source("09_Get_LSOA_NHS_Region_Lookup.R")
 source("10_Get_Practice_Region_Lookup.R")
 DBI::dbDisconnect(con)
+source("12_Summarise_Registration_Coverage.R")
 ```
 
 ```{r prepare-analysis-data, include=FALSE}
@@ -325,9 +316,15 @@ if (nrow(anti_join(
 lsoa_july_geography <- lsoa_july_england %>%
   inner_join(nhser_lookup, by = c("LSOA_Code" = "LSOA21CD"))
 
+registration_coverage <- summarise_registration_coverage(
+  national_registered, lsoa_registered_july, imd_lookup, snapshot_date
+)
+
 imd_july <- lsoa_july_england %>%
   inner_join(
-    imd_lookup %>% mutate(IMD_Decile = as.integer(IMD_Decile)),
+    imd_lookup %>% mutate(
+      IMD_Decile = suppressWarnings(as.numeric(as.character(IMD_Decile)))
+    ),
     by = "LSOA_Code"
   ) %>%
   filter(IMD_Decile %in% 1:10) %>%
@@ -375,6 +372,9 @@ icb_july <- lsoa_july_geography %>%
   )
 
 imd_snapshot <- imd_july %>% filter(Period == snapshot_date)
+if (abs(sum(imd_snapshot$Registered) - registration_coverage$imd_patients) > 0.5) {
+  stop("The deprivation analysis does not reconcile with the opening coverage summary.")
+}
 region_snapshot <- region_july %>% filter(Period == snapshot_date)
 icb_snapshot <- icb_july %>% filter(Period == snapshot_date)
 
@@ -412,74 +412,41 @@ if (nrow(practice_icb_lookup) == 0) {
 }
 ```
 
-# Tables for the research paper
+# Registration sources and deprivation coverage
 
-```{r paper-tables-prepare, include=FALSE}
-source("11_Build_Paper_Tables.R")
-paper_tables <- build_paper_tables(
-  snapshot_date = snapshot_date,
-  national_registered = national_registered,
-  national_ons = national_ons,
-  practice_registered_snapshot = practice_registered_snapshot,
-  practice_demographics = practice_registered_demographic_time_series,
-  ons_demographics = ons_demographic_time_series,
-  lsoa_registered = lsoa_registered_july,
-  lsoa_ons = lsoa_ons_july,
-  imd_lookup = imd_lookup,
-  qualified_gp_workforce = qualified_gp_workforce
-)
-```
-
-## Table 1: Population characteristics and coverage
-
-```{r paper-table-1}
-knitr::kable(
-  paper_tables$table1,
-  align = c("l", "r", "r", "r"),
-  caption = paste0(
-    "Table 1. Population characteristics and source coverage, England, ",
-    format(snapshot_date, "%B %Y"), ". Values are n or n (%)."
+```{r opening-registration-summary-prepare, include=FALSE}
+coverage_difference_text <- function(value, reference, reference_label) {
+  difference <- value - reference
+  if (difference == 0) {
+    return(paste0("the same number of registrations as the ", reference_label, " total"))
+  }
+  paste0(
+    scales::comma(abs(difference), accuracy = 1),
+    if (difference < 0) " fewer registrations than the " else " more registrations than the ",
+    reference_label, " total (",
+    sprintf("%.2f%%", 100 * abs(difference) / reference),
+    " of that reference total)"
   )
-)
+}
 ```
 
-**Table 1 notes.** NE = not extracted or not separately identifiable in the current analysis; NA = not applicable. Neither abbreviation represents zero. Practice registrations include all patients registered with English practices, including residents outside England. The GP LSOA source total includes English and Welsh LSOAs and other/unassigned residence codes; ONS covers usual residents of England.
+For `r format(snapshot_date, "%d %B %Y")`, the practice-level source contains **`r scales::comma(registration_coverage$practice_total)` registered patients**, compared with **`r scales::comma(registration_coverage$lsoa_total)`** in the LSOA-level source before any residence filter or deprivation linkage. The LSOA source therefore contains `r coverage_difference_text(registration_coverage$lsoa_total, registration_coverage$practice_total, "practice-level")`. This source difference arises before any restriction to English LSOAs or linkage to IMD. [NHS England reported processing issues in the July 2024 LSOA release](https://digital.nhs.uk/data-and-information/publications/statistical/patients-registered-at-a-gp-practice/july-2024) and warned that its totals might differ from practice totals.
 
-Residence percentages use the full total of the relevant source. Age and sex percentages use the corresponding national source total. The demographic extract contains only records with both a recognised sex and an assigned age band; the residual outside those categories is reported separately and is not a count of missing sex alone. GP LSOA age and sex are not extracted here. IMD percentages use each source's English-residence population as the denominator; records without a valid IMD decile remain visible. The IMD source snapshot is `r paper_tables$imd_source_date`; the edition is not separately identified in the database extract. Confirm the edition in the manuscript's Methods.
+The LSOA extract includes **`r scales::comma(registration_coverage$welsh_patients)` registered patients across `r scales::comma(registration_coverage$welsh_lsoa_count)` Welsh LSOAs** (`r sprintf("%.2f%%", registration_coverage$welsh_patients_pct)` of all LSOA registrations). Welsh LSOAs do not have values in the English Index of Multiple Deprivation (IMD) used here: [Wales has a separate Welsh Index of Multiple Deprivation, whose deciles are not directly comparable with England's](https://www.gov.uk/government/statistics/english-indices-of-deprivation-2025/english-indices-of-deprivation-2025-frequently-asked-questions). Those Welsh registrations are therefore excluded from the English deprivation analysis. Another `r scales::comma(registration_coverage$other_patients)` registrations have other or unassigned residence codes and are also excluded, leaving **`r scales::comma(registration_coverage$english_patients)` registrations in English LSOAs**. Welsh registrations are already excluded by the England-residence filter and are counted once in this reduction.
 
-LSOA coverage is measured separately in the two original extracts. An LSOA absent from one source is reported as absent rather than inferred to have zero population. Workforce linkage counts practices with a recorded, non-missing FTE value, including a valid zero; registrations without usable workforce linkage include records without an identifiable practice code. There are `r paper_tables$missing_workforce_rows` practice workforce rows with missing FTE in the selected month. National ratios use the observed workforce total from the full workforce extract, so unmatched registration and workforce coverage should be considered when interpreting them.
+Within the English subset, **`r scales::comma(registration_coverage$english_patients_without_imd)` registrations in `r scales::comma(registration_coverage$english_lsoas_without_imd)` LSOAs** have no matching valid IMD decile and are excluded at the deprivation-linkage stage. `r if (registration_coverage$english_patients_without_imd == 0) "There is no further reduction in registered-patient counts from IMD linkage within the English subset." else paste0("This is an additional reduction of ", sprintf("%.2f%%", registration_coverage$english_imd_excluded_pct), " of English-LSOA registrations, beyond the residence exclusions.")`
 
-GP registration counts refer to `r format(snapshot_date, "%d %B %Y")`. ONS estimates are mid-year estimates referring to 30 June `r format(snapshot_date, "%Y")`, represented by the report's July snapshot. The workforce reference date is `r format(paper_tables$workforce_date, "%d %B %Y")`. The report uses LSOA 2021 codes and April 2026 ICB geography while retaining the original population and workforce observations.
+Consequently, the deprivation analyses contain **`r scales::comma(registration_coverage$imd_patients)` registered patients**: `r coverage_difference_text(registration_coverage$imd_patients, registration_coverage$lsoa_total, "unfiltered LSOA-level")`, and `r coverage_difference_text(registration_coverage$imd_patients, registration_coverage$practice_total, "practice-level")`. The reduction from the unfiltered LSOA total is the sum of Welsh-residence exclusions, other/unassigned-residence exclusions and the additional English IMD-linkage exclusions. The comparison with the practice total also includes the initial practice-versus-LSOA source difference. These are differences in aggregate registration counts, not evidence identifying individual ghost patients.
 
-## Table 2: National differences and workforce ratios
+# Scope and interpretation
 
-```{r paper-table-2-population}
-knitr::kable(
-  paper_tables$table2_population,
-  align = c("l", "r", "r", "r", "r"),
-  caption = paste0(
-    "Table 2A. National population comparisons, ",
-    format(snapshot_date, "%B %Y"), "."
-  )
-)
-```
+This report compares GP registered-patient counts with ONS population estimates for England from July 2015 onwards. ONS estimates are restricted to England. National and age/sex registered-patient series are practice-based and therefore include all patients registered with English GP practices. LSOA-derived analyses explicitly restrict registered patients to English residence LSOAs before IMD, NHS region and ICB aggregation. Percentage difference is defined as:
 
-**Table 2A notes.** Difference is the first total minus the second total. The practice-versus-LSOA percentage uses the practice total as its denominator; both comparisons against ONS use the ONS total. The practice-versus-LSOA comparison includes all LSOA residence codes to compare the registration sources before an England-only filter. The LSOA-versus-ONS comparison uses English residence only. The practice-versus-ONS comparison includes all patients registered with English practices, whose residence coverage differs from the ONS population.
+\[
+100 \times \frac{\text{registered patients} - \text{ONS population}}{\text{ONS population}}
+\]
 
-```{r paper-table-2-workforce}
-knitr::kable(
-  paper_tables$table2_workforce,
-  align = c("l", "r", "r"),
-  caption = paste0(
-    "Table 2B. National people per GP partner/salaried FTE, ",
-    format(snapshot_date, "%B %Y"), "."
-  )
-)
-```
-
-**Table 2B notes.** Both population bases use the same unrounded GP FTE denominator. The workforce measure sums senior partners, partners/providers, GPs salaried by the practice and GPs salaried by other organisations. It excludes GP trainees and locum categories; it should not be equated with the NHS headline fully qualified GP series, which includes regular locums. One FTE represents 37.5 hours per week. FTE totals are displayed to one decimal place and people per FTE to the nearest whole number. These ratios describe population relative to recorded staffing, rather than measured consultations or clinical workload.
-
-**Source and interpretation notes.** [NHS England's July 2024 registration release](https://digital.nhs.uk/data-and-information/publications/statistical/patients-registered-at-a-gp-practice/july-2024) reported an alternative process for producing the LSOA files and warned that their totals might differ from practice files. Discrepancies between either registration source and ONS estimates do not by themselves identify ghost patients. Population timing follows the [ONS mid-year population estimates](https://www.ons.gov.uk/releases/populationestimatesbyoutputareaselectoralhealthandothergeographiesenglandandwalesmid2023andmid2024revisedmid2022), and workforce definitions follow the [NHS July 2024 workforce publication](https://digital.nhs.uk/data-and-information/publications/statistical/general-and-personal-medical-services/31-july-2024). No significance tests are attached to these descriptive tables.
+Positive values mean registered-patient counts exceed ONS estimates. Snapshot analyses use `r format(snapshot_date, "%B %Y")`.
 
 # National population over time
 
@@ -1313,7 +1280,7 @@ patients_per_gp_icb_snapshot %>%
     `ONS population per GP FTE` =
       scales::comma(ONS_Per_GP_FTE, accuracy = 1)
   ) %>%
-  knitr::kable(caption = "Supplementary Table S1. ICB patients per GP FTE comparison (April 2026 geography)")
+  knitr::kable(caption = "ICB patients per GP FTE comparison")
 ```
 
 # Potential payment reduction

@@ -32,10 +32,25 @@ summarise_registration_coverage <- function(
   english <- !is.na(registered$LSOA_Code) & grepl("^E01", registered$LSOA_Code)
   welsh <- !is.na(registered$LSOA_Code) & grepl("^W0", registered$LSOA_Code)
   other <- !english & !welsh
+  imd_match <- match(registered$LSOA_Code, imd_lookup$LSOA_Code)
   decile <- suppressWarnings(as.numeric(as.character(
-    imd_lookup$IMD_Decile[match(registered$LSOA_Code, imd_lookup$LSOA_Code)])))
+    imd_lookup$IMD_Decile[imd_match])))
   eligible <- english & decile %in% 1:10
   english_without_imd <- english & !eligible
+  english_absent_imd <- english & is.na(imd_match)
+  english_invalid_imd <- english & !is.na(imd_match) & !eligible
+  linkage_status <- rep("Other or unassigned residence", nrow(registered))
+  linkage_status[welsh] <- "Welsh residence: separate deprivation index"
+  linkage_status[eligible] <- "English LSOA: valid IMD decile"
+  linkage_status[english_absent_imd] <- "English LSOA: absent from IMD lookup"
+  linkage_status[english_invalid_imd] <- "English LSOA: invalid or missing IMD decile"
+  linkage_audit <- data.frame(
+    LSOA_Code = as.character(registered$LSOA_Code),
+    Registered = registered$Registered,
+    Linkage_Status = linkage_status,
+    IMD_Decile = decile,
+    stringsAsFactors = FALSE
+  )
   practice_total <- national$Population
   lsoa_total <- sum(registered$Registered)
   english_total <- sum(registered$Registered[english])
@@ -62,6 +77,9 @@ summarise_registration_coverage <- function(
     english_patients = english_total,
     english_lsoas_without_imd = sum(english_without_imd),
     english_patients_without_imd = english_imd_excluded,
+    english_patients_absent_from_imd = sum(registered$Registered[english_absent_imd]),
+    english_patients_invalid_imd = sum(registered$Registered[english_invalid_imd]),
+    linkage_audit = linkage_audit,
     english_imd_excluded_pct = if (english_total > 0)
       100 * english_imd_excluded / english_total else NA_real_,
     imd_patients = imd_total,

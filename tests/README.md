@@ -15,6 +15,19 @@ overwrite database estimates or imply that a snapshot date proves the ONS year.
 
 # Payment reduction and report tables
 
+Run `Rscript tests/test_fixed_total_payment_rates.R` for the additional
+comparison holding each geography's full payment total constant. Tests check
+£165 versus £183.33 when £1,650,000 is divided by 10,000 registrations or
+9,000 ONS residents, a lower average when ONS exceeds registrations, equal
+populations, zero payments, undefined averages at zero ONS population, invalid
+inputs, unrounded rates, and independence from the loss model's remaining pot.
+
+The focused report retains all three payment-loss charts and adds national,
+regional and April 2026 ICB average-payment charts, with expandable tables.
+The added calculation uses the same practice registration and payment totals
+as the loss model, and changes only the population denominator. Total payments
+remain unchanged even when the ONS denominator is larger than registrations.
+
 Run `Rscript tests/test_payment_reduction.R` from the repository root. The
 base R tests cover the £165-per-registration example, no loss where ONS equals
 or exceeds registrations, zero payments, an unrounded rate, and invalid inputs.
@@ -33,6 +46,14 @@ Its discussion distinguishes supported census/migration context from unverified
 causes of the particular curves in the database.
 
 # Registration coverage
+
+The coverage audit separates English codes absent from the IMD lookup from
+codes present with missing/invalid deciles. Other/unassigned residence is
+computed before the lookup and does not disappear when English IMD coverage
+improves. The report shows an expandable code-level audit and the warehouse
+IMD snapshot date, without claiming that the date identifies the index edition.
+The IMD extract no longer uses MAX(decile) to conceal conflicting records;
+exact duplicate records are removed, while conflicting LSOA keys fail validation.
 
 Run `Rscript tests/test_registration_coverage.R` from the repository root.
 These base R fixtures check the practice-to-LSOA source difference, Welsh LSOA

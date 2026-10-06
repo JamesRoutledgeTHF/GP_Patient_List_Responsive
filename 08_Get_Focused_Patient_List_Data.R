@@ -58,7 +58,8 @@ national_ons <- DBI::dbGetQuery(
   glue::glue("
     SELECT
       Effective_Snapshot_Date AS Period,
-      SUM(Size) AS Population
+      SUM(Size) AS Population,
+      COUNT(DISTINCT Area_Code) AS LSOA_Count
     FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
     WHERE Effective_Snapshot_Date >= '{start_sql}'
       AND Effective_Snapshot_Date <= '{end_sql}'

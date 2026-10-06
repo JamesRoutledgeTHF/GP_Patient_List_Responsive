@@ -1,3 +1,22 @@
+# Payment reduction and report tables
+
+Run `Rscript tests/test_payment_reduction.R` from the repository root. The
+base R tests cover the £165-per-registration example, no loss where ONS equals
+or exceeds registrations, zero payments, an unrounded rate, and invalid inputs.
+
+`13_Model_Payment_Reduction.R` calculates a loss-only scenario using each
+geography's own observed payment rate. Regional/ICB estimates are independent
+of the national calculation and may not add up to it. This assumes all payment
+categories change proportionately with the unweighted registered list; it does
+not implement the actual GP contract.
+
+The focused HTML report uses closed-by-default native `details` elements for
+every table. Each summary can be activated with a mouse or keyboard. Word
+output retains ordinary visible tables. The ONS age-trend audit uses July
+snapshots, does not bridge gaps in years, and includes source LSOA counts.
+Its discussion distinguishes supported census/migration context from unverified
+causes of the particular curves in the database.
+
 # Registration coverage
 
 Run `Rscript tests/test_registration_coverage.R` from the repository root.

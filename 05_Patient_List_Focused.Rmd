@@ -128,6 +128,27 @@ comparison_bar <- function(
     )
 }
 
+
+# HTML tables start closed; document outputs retain ordinary visible tables.
+report_table <- function(x, caption = NULL, ...) {
+  if (!knitr::is_html_output()) {
+    return(knitr::kable(x, caption = caption, ...))
+  }
+  summary <- if (is.null(caption)) "View table" else paste("View table:", caption)
+  summary <- gsub("&", "&amp;", summary, fixed = TRUE)
+  summary <- gsub("<", "&lt;", summary, fixed = TRUE)
+  summary <- gsub(">", "&gt;", summary, fixed = TRUE)
+  table_html <- paste(
+    knitr::kable(x, format = "html", caption = caption, ...),
+    collapse = "\n"
+  )
+  knitr::asis_output(paste0(
+    "\n<details class=\"report-table\"><summary>", summary, "</summary>\n",
+    "<div class=\"report-table-scroll\">\n", table_html,
+    "\n</div>\n</details>\n"
+  ))
+}
+
 first_matching_column <- function(data, exact = character(), regex = NULL) {
   nm <- names(data)
 
@@ -144,6 +165,19 @@ first_matching_column <- function(data, exact = character(), regex = NULL) {
   }
 
   NA_character_
+}
+```
+
+
+```{r report-table-style, echo=FALSE, results='asis'}
+if (knitr::is_html_output()) {
+  cat('<style>
+.report-table { margin: 1em 0; border: 1px solid #d8dfe5; border-radius: 4px; padding: .6em .8em; }
+.report-table > summary { cursor: pointer; font-weight: 600; color: #2166ac; }
+.report-table > summary:focus-visible { outline: 2px solid #2166ac; outline-offset: 3px; }
+.report-table-scroll { overflow-x: auto; margin-top: .8em; }
+.report-table-scroll table { width: 100%; }
+</style>')
 }
 ```
 
@@ -448,6 +482,8 @@ This report compares GP registered-patient counts with ONS population estimates 
 
 Positive values mean registered-patient counts exceed ONS estimates. Snapshot analyses use `r format(snapshot_date, "%B %Y")`.
 
+In the HTML report, select **View table** to expand a table beneath the charts. Tables remain visible in the Word report.
+
 # National population over time
 
 ```{r national-population-time-series}
@@ -495,6 +531,10 @@ ggplot(
   age_time_series,
   aes(x = Period, y = Population, colour = Source, group = Source)
 ) +
+  geom_vline(
+    xintercept = as.numeric(as.Date("2021-07-01")),
+    linetype = "dashed", colour = "grey65", linewidth = 0.4
+  ) +
   geom_line(
     data = age_time_series %>% filter(!is.na(Population)),
     linewidth = 0.8
@@ -516,13 +556,58 @@ ggplot(
     subtitle = "Registered patients and ONS estimates",
     x = NULL,
     y = "Population",
-    colour = NULL
+    colour = NULL,
+    caption = "Dashed line: Census 2021 year; the cause of any turning point is not established by the chart."
   ) +
   theme_minimal(base_size = 11) +
   theme(
     legend.position = "top",
     panel.grid.minor = element_blank()
   )
+```
+
+## Interpreting the apparent turn around 2021
+
+The change in the 0–9 and 20–29 curves needs to be considered alongside both demography and revisions to the population estimates. [ONS mid-2021 estimates introduced the Census 2021 population base](https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/bulletins/annualmidyearpopulationestimates/mid2021), and [ONS subsequently rebased the pre-2021 series](https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/bulletins/rebasingofmidyearpopulationestimatesfollowing/latest). Combining older pre-census estimates with newer post-census estimates can create a discontinuity. The database extract does not identify the publication vintage of each year's estimate, so a census-related break is a possibility to check, rather than a confirmed explanation for these particular curves.
+
+For **ages 20–29**, continued growth after 2021 is consistent with increased net international migration and changes in the cohorts entering and leaving the age band. [ONS identified migration as the main contributor to population growth in the year to mid-2023 and noted large increases among 20–29-year-olds in many rapidly growing local authorities](https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/bulletins/populationestimatesforenglandandwales/mid2023). This supports migration as a plausible contributor, but does not quantify how much of this report's national age-band change it explains.
+
+For **ages 0–9**, the population is a stock of ten birth cohorts, changed by births, children ageing out at ten, deaths and migration of children. A rise therefore does not necessarily mean that births have started increasing. [Births in England and Wales increased briefly in 2021](https://www.ons.gov.uk/peoplepopulationandcommunity/birthsdeathsandmarriages/livebirths/bulletins/birthsummarytablesenglandandwales/2021), then [fell in 2022](https://www.ons.gov.uk/peoplepopulationandcommunity/birthsdeathsandmarriages/livebirths/bulletins/birthsummarytablesenglandandwales/2022) and [2023](https://www.ons.gov.uk/peoplepopulationandcommunity/birthsdeathsandmarriages/livebirths/bulletins/birthsummarytablesenglandandwales/2023). ONS rebasing also reduced, rather than universally increased, estimates for children in England. The apparent upturn should therefore be checked against a consistently revised ONS series and child migration/cohort flows before it is attributed to a sustained change in births.
+
+The expandable audit below reports the actual July estimates and changes for the two age bands, together with the number of English LSOAs represented in each source snapshot. Changes in LSOA counts can reflect new boundaries or incomplete coverage; a boundary change alone should not change the national total if coverage is complete. Annual changes are shown only where consecutive years are present. These checks identify the timing of the observed change; they do not establish its cause.
+
+```{r ons-age-trend-audit, results='asis'}
+ons_age_trend_audit <- age_time_series %>%
+  filter(
+    Source == "ONS population estimate",
+    Age_Band %in% c("0-9", "20-29"),
+    format(Period, "%m") == "07",
+    !is.na(Population)
+  ) %>%
+  mutate(Year = as.integer(format(Period, "%Y"))) %>%
+  arrange(Age_Band, Period) %>%
+  group_by(Age_Band) %>%
+  mutate(
+    Previous_Population = lag(Population),
+    Consecutive_Year = Year == lag(Year) + 1L,
+    Annual_Change = if_else(Consecutive_Year, Population - Previous_Population, NA_real_),
+    Annual_Change_Pct = if_else(
+      Consecutive_Year & Previous_Population > 0,
+      100 * Annual_Change / Previous_Population, NA_real_
+    )
+  ) %>%
+  ungroup() %>%
+  left_join(national_ons %>% select(Period, LSOA_Count), by = "Period") %>%
+  filter(Year >= 2018) %>%
+  transmute(
+    Year, `Age band` = Age_Band,
+    `ONS population` = scales::comma(Population),
+    `Annual change, n` = if_else(is.na(Annual_Change), "Not available", scales::comma(Annual_Change)),
+    `Annual change, %` = if_else(is.na(Annual_Change_Pct), "Not available",
+                                 sprintf("%.2f%%", Annual_Change_Pct)),
+    `English LSOAs in source, n` = scales::comma(LSOA_Count)
+  )
+report_table(ons_age_trend_audit, caption = "ONS age-band estimates and source coverage around 2021")
 ```
 
 # Sex over time
@@ -576,7 +661,7 @@ comparison_bar(
 )
 ```
 
-```{r national-snapshot-table}
+```{r national-snapshot-table, results='asis'}
 national_snapshot %>%
   transmute(
     Geography,
@@ -585,14 +670,14 @@ national_snapshot %>%
     `Raw difference` = scales::comma(Registered - ONS),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  knitr::kable(caption = "National population comparison")
+  report_table(caption = "National population comparison")
 ```
 
 ## GP practice totals compared with GP LSOA totals
 
 This compares both registered-patient sources at the same snapshot date. The GP LSOA total includes all residence codes, including Wales and unassigned/other records, before any ONS join or England-only filter. A positive difference means the practice-based total is larger. The difference alone does not identify ghost patients.
 
-```{r practice-versus-lsoa-table}
+```{r practice-versus-lsoa-table, results='asis'}
 practice_total_snapshot <- national_registered %>%
   filter(Period == snapshot_date)
 
@@ -620,7 +705,7 @@ practice_lsoa_comparison %>%
     `Practice minus LSOA` = scales::comma(Difference),
     `Difference (% of practice total)` = sprintf("%.2f%%", Pct_Difference)
   ) %>%
-  knitr::kable(caption = "Overall difference between GP practice and GP LSOA list totals")
+  report_table(caption = "Overall difference between GP practice and GP LSOA list totals")
 ```
 
 Of the GP LSOA total, `r scales::comma(lsoa_registered_snapshot_total - registered_removed_non_england)` patients have an English LSOA, `r scales::comma(registered_removed_wales)` have a Welsh LSOA, and `r scales::comma(registered_removed_other)` have another or unassigned residence code. Later LSOA analyses use the English-LSOA subtotal.
@@ -637,7 +722,7 @@ comparison_bar(
 )
 ```
 
-```{r age-snapshot-table}
+```{r age-snapshot-table, results='asis'}
 age_snapshot %>%
   transmute(
     `Age band` = Age_Band,
@@ -646,7 +731,7 @@ age_snapshot %>%
     `Raw difference` = scales::comma(Registered - ONS),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  knitr::kable(caption = "Population comparison by age")
+  report_table(caption = "Population comparison by age")
 ```
 
 ## Sex
@@ -661,7 +746,7 @@ comparison_bar(
 )
 ```
 
-```{r sex-snapshot-table}
+```{r sex-snapshot-table, results='asis'}
 sex_snapshot %>%
   transmute(
     Sex,
@@ -670,7 +755,7 @@ sex_snapshot %>%
     `Raw difference` = scales::comma(Registered - ONS),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  knitr::kable(caption = "Population comparison by sex")
+  report_table(caption = "Population comparison by sex")
 ```
 
 ## Age and sex
@@ -712,7 +797,7 @@ ggplot(
   )
 ```
 
-```{r age-sex-snapshot-table}
+```{r age-sex-snapshot-table, results='asis'}
 age_sex_snapshot %>%
   arrange(Age_Band, Sex) %>%
   transmute(
@@ -723,7 +808,7 @@ age_sex_snapshot %>%
     `Raw difference` = scales::comma(Registered - ONS),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  knitr::kable(caption = "Population comparison by age and sex")
+  report_table(caption = "Population comparison by age and sex")
 ```
 
 # IMD deciles using LSOA data
@@ -741,7 +826,7 @@ comparison_bar(
 
 **England-resident LSOA scope:** all LSOA-derived analyses from this point use only English `E01...` LSOAs. At the `r format(snapshot_date, "%B %Y")` snapshot, this excludes **`r scales::comma(registered_removed_non_england)` registered patients** living in non-English LSOAs: **`r scales::comma(registered_removed_wales)` in Wales** and **`r scales::comma(registered_removed_other)` in other non-English LSOAs** (`r sprintf("%.2f%%", registered_removed_non_england_pct)` of registered patients in the LSOA dataset).
 
-```{r imd-snapshot-table}
+```{r imd-snapshot-table, results='asis'}
 imd_snapshot %>%
   arrange(IMD_Decile) %>%
   transmute(
@@ -751,7 +836,7 @@ imd_snapshot %>%
     `Raw difference` = scales::comma(Raw_Difference),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  knitr::kable(caption = "Population comparison by IMD decile")
+  report_table(caption = "Population comparison by IMD decile")
 ```
 
 # NHS England regions
@@ -769,7 +854,7 @@ comparison_bar(
 )
 ```
 
-```{r region-snapshot-table}
+```{r region-snapshot-table, results='asis'}
 region_snapshot %>%
   arrange(desc(Pct_Difference)) %>%
   transmute(
@@ -779,7 +864,7 @@ region_snapshot %>%
     `Raw difference` = scales::comma(Raw_Difference),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  knitr::kable(caption = "Population comparison by NHS England region")
+  report_table(caption = "Population comparison by NHS England region")
 ```
 
 # NHS integrated care boards
@@ -799,7 +884,7 @@ comparison_bar(
 )
 ```
 
-```{r icb-snapshot-table}
+```{r icb-snapshot-table, results='asis'}
 icb_snapshot %>%
   arrange(desc(Pct_Difference)) %>%
   transmute(
@@ -809,7 +894,7 @@ icb_snapshot %>%
     `Raw difference` = scales::comma(Raw_Difference),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  knitr::kable(caption = "Population comparison by NHS integrated care board")
+  report_table(caption = "Population comparison by NHS integrated care board")
 ```
 
 
@@ -1249,7 +1334,7 @@ ggplot(
   )
 ```
 
-```{r patients-per-gp-table}
+```{r patients-per-gp-table, results='asis'}
 patients_per_gp_national_snapshot %>%
   transmute(
     Geography,
@@ -1258,7 +1343,7 @@ patients_per_gp_national_snapshot %>%
     `ONS population per GP FTE` =
       scales::comma(ONS_Per_GP_FTE, accuracy = 1)
   ) %>%
-  knitr::kable(caption = "National patients per GP FTE comparison")
+  report_table(caption = "National patients per GP FTE comparison")
 
 patients_per_gp_region_snapshot %>%
   arrange(desc(Registered_Per_GP_FTE)) %>%
@@ -1269,7 +1354,7 @@ patients_per_gp_region_snapshot %>%
     `ONS population per GP FTE` =
       scales::comma(ONS_Per_GP_FTE, accuracy = 1)
   ) %>%
-  knitr::kable(caption = "Regional patients per GP FTE comparison")
+  report_table(caption = "Regional patients per GP FTE comparison")
 
 patients_per_gp_icb_snapshot %>%
   arrange(desc(Registered_Per_GP_FTE)) %>%
@@ -1280,728 +1365,190 @@ patients_per_gp_icb_snapshot %>%
     `ONS population per GP FTE` =
       scales::comma(ONS_Per_GP_FTE, accuracy = 1)
   ) %>%
-  knitr::kable(caption = "ICB patients per GP FTE comparison")
+  report_table(caption = "ICB patients per GP FTE comparison")
 ```
 
-# Potential payment reduction
+# Potential overall payment reduction
 
-The payment scenario uses the latest available records for the metric Total NHS Payments to General Practice Minus Deductions from the payments query in 03_Payments_To_GP_Practice.R. It compares payment per registered patient with payment per ONS-estimated resident and estimates the potential overall reduction if the registered-patient payment rate were applied to the ONS population.
+## Method
 
-```{r payment-scenario-prepare, include=FALSE}
+This section models the money removed from payments if registered lists were reduced towards the ONS population and each removed registration carried its payment with it. For each geography, the annual payment per registered patient is calculated from its observed total payments and its registered-patient count:
+
+\[
+\text{Payment per registered patient} = \frac{\text{Current payments}}{\text{Registered patients}}
+\]
+
+\[
+\text{Registrations removed} = \max(\text{Registered patients} - \text{ONS residents},\ 0)
+\]
+
+\[
+\text{Potential loss} = \text{Registrations removed} \times \text{Payment per registered patient}
+\]
+
+\[
+\text{Remaining payments} = \text{Current payments} - \text{Potential loss}
+\]
+
+For example, a payment rate of **£165 per registered patient** and a modelled reduction of **1,000 registrations** produces a **£165,000 loss**, subtracted from the current total. The report uses the actual calculated rate for each geography, rather than fixing every rate at £165. Where the ONS population equals or exceeds registrations, this loss-only scenario removes no registrations and shows no payment reduction.
+
+The scenario assumes that all payments fall proportionately with the unweighted registered list. Actual payments include categories such as premises, QOF and incentive schemes, so [this is an illustrative funding scenario rather than a prediction of contractual losses](https://digital.nhs.uk/data-and-information/publications/statistical/nhs-payments-to-general-practice/england-2024-25). It also assumes that the entire positive registration-versus-ONS difference could be removed; the difference does not identify individual ghost patients. Practice counts follow practice location while ONS counts follow residence, so cross-boundary registration can contribute to the difference.
+
+National and local estimates use their own observed payment rates and population differences. Regional or ICB losses therefore need not sum to the independently calculated national loss, especially where positive and negative population differences offset. Local figures include records assigned to the relevant geography; unassigned payment and registration amounts are disclosed below. All population counts retain the selected 2024 snapshot, with ICB results grouped on April 2026 geography.
+
+```{r payment-scenario-prepare, include=FALSE, results='asis'}
+source("13_Model_Payment_Reduction.R")
 payment_metric_name <- "Total NHS Payments to General Practice Minus Deductions"
 
 payment_data <- finance_datasets %>%
   mutate(
     Effective_Snapshot_Date = as.Date(Effective_Snapshot_Date),
-    Metric_Value = as.numeric(Metric_Value)
+    Metric_Value = as.numeric(Metric_Value),
+    Practice_Code = as.character(Practice_Code)
   ) %>%
   filter(Metric == payment_metric_name)
 
-payment_snapshot_date <- max(
-  payment_data$Effective_Snapshot_Date,
-  na.rm = TRUE
-)
-
-payment_by_practice <- payment_data %>%
-  filter(Effective_Snapshot_Date == payment_snapshot_date) %>%
+if (nrow(payment_data) == 0L ||
+    any(is.na(payment_data$Effective_Snapshot_Date))) {
+  stop("No valid payment snapshot is available for the selected metric.")
+}
+payment_snapshot_date <- max(payment_data$Effective_Snapshot_Date)
+payment_current <- payment_data %>%
+  filter(Effective_Snapshot_Date == payment_snapshot_date)
+if (any(!is.finite(payment_current$Metric_Value))) {
+  stop("The selected payment snapshot contains missing or non-finite amounts.")
+}
+payment_by_practice <- payment_current %>%
   group_by(Practice_Code) %>%
-  summarise(
-    Total_Payments = sum(Metric_Value, na.rm = TRUE),
-    .groups = "drop"
-  )
+  summarise(Total_Payments = sum(Metric_Value), .groups = "drop")
 
-national_payment_scenario <- tibble::tibble(
+national_payment_scenario <- model_payment_reduction(tibble::tibble(
   Geography = "England",
-  Total_Payments = sum(payment_by_practice$Total_Payments, na.rm = TRUE),
+  Total_Payments = sum(payment_by_practice$Total_Payments),
   Registered = national_snapshot$Registered,
   ONS = national_snapshot$ONS
-) %>%
-  mutate(
-    Payment_Per_Registered = Total_Payments / Registered,
-    Payment_Per_ONS = Total_Payments / ONS,
-    ONS_Adjusted_Payments = Payment_Per_Registered * ONS,
-    Potential_Reduction = Total_Payments - ONS_Adjusted_Payments
-  )
+))
 
 regional_payment_scenario <- payment_by_practice %>%
   inner_join(practice_region_lookup, by = "Practice_Code") %>%
   group_by(NHS_Region) %>%
-  summarise(
-    Total_Payments = sum(Total_Payments, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
+  summarise(Total_Payments = sum(Total_Payments), .groups = "drop") %>%
   left_join(practice_region_registered, by = "NHS_Region") %>%
   left_join(
     region_snapshot %>%
-      transmute(
-        NHS_Region = normalise_region_name(NHSER26NM),
-        NHS_Region_Display = NHSER26NM,
-        ONS
-      ),
+      transmute(NHS_Region = normalise_region_name(NHSER26NM), ONS),
     by = "NHS_Region"
   ) %>%
-  filter(Registered > 0, ONS > 0) %>%
-  mutate(
-    Payment_Per_Registered = Total_Payments / Registered,
-    Payment_Per_ONS = Total_Payments / ONS,
-    ONS_Adjusted_Payments = Payment_Per_Registered * ONS,
-    Potential_Reduction = Total_Payments - ONS_Adjusted_Payments,
-    Pct_Difference_Payment_Per_Person =
-      100 * (Payment_Per_Registered - Payment_Per_ONS) / Payment_Per_ONS
-  )
+  model_payment_reduction()
 
 icb_payment_scenario <- payment_by_practice %>%
   inner_join(practice_icb_lookup, by = "Practice_Code") %>%
   group_by(ICB_Key, ICB) %>%
-  summarise(
-    Total_Payments = sum(Total_Payments, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
+  summarise(Total_Payments = sum(Total_Payments), .groups = "drop") %>%
   rename(ICB_Payment_Name = ICB) %>%
   left_join(
     practice_icb_registered %>% rename(ICB_Registered_Name = ICB),
     by = "ICB_Key"
   ) %>%
   left_join(icb_population_snapshot, by = "ICB_Key") %>%
-  mutate(
-    ICB = coalesce(
-      ICB_Population_Name,
-      ICB_Registered_Name,
-      ICB_Payment_Name
-    )
-  ) %>%
-  filter(Registered > 0, ONS > 0) %>%
-  mutate(
-    Payment_Per_Registered = Total_Payments / Registered,
-    Payment_Per_ONS = Total_Payments / ONS,
-    ONS_Adjusted_Payments = Payment_Per_Registered * ONS,
-    Potential_Reduction = Total_Payments - ONS_Adjusted_Payments
-  ) %>%
-  select(
-    ICB_Key,
-    ICB,
-    Total_Payments,
-    Registered,
-    ONS,
-    Payment_Per_Registered,
-    Payment_Per_ONS,
-    ONS_Adjusted_Payments,
-    Potential_Reduction
-  )
+  mutate(ICB = coalesce(ICB_Population_Name, ICB_Registered_Name, ICB_Payment_Name)) %>%
+  model_payment_reduction()
 
-national_payment_long <- national_payment_scenario %>%
-  select(
-    Geography,
-    `Registered population` = Payment_Per_Registered,
-    `ONS population` = Payment_Per_ONS
-  ) %>%
-  pivot_longer(
-    -Geography,
-    names_to = "Population basis",
-    values_to = "Payment_Per_Person"
-  )
+payment_unassigned_region <- payment_by_practice %>%
+  anti_join(practice_region_lookup, by = "Practice_Code") %>%
+  summarise(Amount = sum(Total_Payments)) %>% pull(Amount)
+payment_unassigned_icb <- payment_by_practice %>%
+  anti_join(practice_icb_lookup, by = "Practice_Code") %>%
+  summarise(Amount = sum(Total_Payments)) %>% pull(Amount)
+registered_unassigned_region <- national_snapshot$Registered -
+  sum(practice_region_registered$Registered)
+registered_unassigned_icb <- national_snapshot$Registered -
+  sum(practice_icb_registered$Registered)
+if (registered_unassigned_region < -0.5 || registered_unassigned_icb < -0.5) {
+  stop("Geographic registration totals exceed the national practice total.")
+}
 
-regional_payment_long <- regional_payment_scenario %>%
-  select(
-    NHS_Region,
-    `Registered population` = Payment_Per_Registered,
-    `ONS population` = Payment_Per_ONS
-  ) %>%
-  pivot_longer(
-    -NHS_Region,
-    names_to = "Population basis",
-    values_to = "Payment_Per_Person"
-  )
-
-region_payment_order <- regional_payment_scenario %>%
-  arrange(Payment_Per_Registered) %>%
-  pull(NHS_Region)
-
-regional_payment_long <- regional_payment_long %>%
-  mutate(NHS_Region = factor(NHS_Region, levels = region_payment_order))
-
-icb_payment_long <- icb_payment_scenario %>%
-  select(
-    ICB,
-    `Registered population` = Payment_Per_Registered,
-    `ONS population` = Payment_Per_ONS
-  ) %>%
-  pivot_longer(
-    -ICB,
-    names_to = "Population basis",
-    values_to = "Payment_Per_Person"
-  )
-
-icb_payment_order <- icb_payment_scenario %>%
-  arrange(Payment_Per_Registered) %>%
-  pull(ICB)
-
-icb_payment_long <- icb_payment_long %>%
-  mutate(ICB = factor(ICB, levels = icb_payment_order))
-```
-
-```{r national-payment-chart}
-ggplot(
-  national_payment_long,
-  aes(x = `Population basis`, y = Payment_Per_Person, fill = `Population basis`)
-) +
-  geom_col(width = 0.65) +
-  geom_text(
-    aes(label = scales::label_currency(prefix = "\u00A3")(Payment_Per_Person)),
-    vjust = -0.3
-  ) +
-  scale_y_continuous(
-    labels = scales::label_currency(prefix = "\u00A3"),
-    limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.12))
-  ) +
-  scale_fill_manual(values = c(
-    "Registered population" = "#2166AC",
-    "ONS population" = "#B2182B"
-  ), guide = "none") +
-  labs(
-    title = "National payment per person under alternative population denominators",
-    subtitle = paste(
-      "Payment data snapshot:",
-      format(payment_snapshot_date, "%B %Y"),
-      "| Population snapshot:",
-      format(snapshot_date, "%B %Y")
-    ),
-    x = NULL,
-    y = "Payment per person"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(panel.grid.major.x = element_blank())
-```
-
-## Payment per person by NHS England region
-
-```{r regional-payment-per-person-dumbbell, fig.height=7}
-regional_payment_dumbbell <- regional_payment_scenario %>%
-  mutate(
-    NHS_Region = reorder(NHS_Region, Payment_Per_Registered)
-  )
-
-ggplot(
-  regional_payment_dumbbell,
-  aes(y = NHS_Region)
-) +
-  geom_segment(
-    aes(
-      x = Payment_Per_ONS,
-      xend = Payment_Per_Registered,
-      yend = NHS_Region
-    ),
-    colour = "grey65",
-    linewidth = 0.9
-  ) +
-  geom_point(
-    aes(x = Payment_Per_Registered, colour = "Registered population"),
-    size = 3
-  ) +
-  geom_point(
-    aes(x = Payment_Per_ONS, colour = "ONS population"),
-    size = 3
-  ) +
-  geom_text(
-    aes(
-      x = Payment_Per_Registered,
-      label = paste0(
-        gbp_symbol,
-        scales::number(Payment_Per_Registered, accuracy = 0.01)
-      )
-    ),
-    hjust = -0.12,
-    vjust = -0.7,
-    size = 3.3
-  ) +
-  geom_text(
-    aes(
-      x = Payment_Per_ONS,
-      label = paste0(
-        gbp_symbol,
-        scales::number(Payment_Per_ONS, accuracy = 0.01)
-      )
-    ),
-    hjust = -0.12,
-    vjust = 1.25,
-    size = 3.3
-  ) +
-  scale_x_continuous(
-    labels = function(x) paste0(
-      gbp_symbol,
-      scales::number(x, accuracy = 1)
-    ),
-    limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.22))
-  ) +
-  scale_colour_manual(values = c(
-    "Registered population" = "#2166AC",
-    "ONS population" = "#B2182B"
-  )) +
-  labs(
-    title = "Payment per person by NHS England region",
-    subtitle = paste(
-      "Payment data snapshot:",
-      format(payment_snapshot_date, "%B %Y"),
-      "| Population snapshot:",
-      format(snapshot_date, "%B %Y")
-    ),
-    x = "Payment per person",
-    y = NULL,
-    colour = NULL
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    legend.position = "top",
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor = element_blank()
-  )
-```
-
-```{r regional-payment-per-person-percentage-difference, fig.height=6}
-payment_region_pct_plot <- regional_payment_scenario %>%
-  mutate(
-    NHS_Region = reorder(NHS_Region, Pct_Difference_Payment_Per_Person),
-    Direction = if_else(
-      Pct_Difference_Payment_Per_Person >= 0,
-      "Registered basis higher",
-      "Registered basis lower"
-    )
-  )
-
-ggplot(
-  payment_region_pct_plot,
-  aes(
-    x = Pct_Difference_Payment_Per_Person,
-    y = NHS_Region,
-    fill = Direction
-  )
-) +
-  geom_vline(xintercept = 0, colour = "grey55") +
-  geom_col(width = 0.7) +
-  geom_text(
-    aes(
-      label = sprintf("%.1f%%", Pct_Difference_Payment_Per_Person),
-      hjust = if_else(Pct_Difference_Payment_Per_Person >= 0, -0.12, 1.12)
-    ),
-    size = 3.6
-  ) +
-  scale_x_continuous(
-    labels = function(x) paste0(x, "%"),
-    expand = expansion(mult = c(0.15, 0.15))
-  ) +
-  scale_fill_manual(values = c(
-    "Registered basis higher" = "#2166AC",
-    "Registered basis lower" = "#B2182B"
-  ), guide = "none") +
-  labs(
-    title = "Percentage difference in payment per person by NHS England region",
-    subtitle = "Registered-patient denominator compared with ONS population denominator",
-    x = "Percentage difference vs ONS basis",
-    y = NULL
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor = element_blank()
-  )
-```
-
-## Payment per person by integrated care board
-
-```{r icb-payment-per-person-dumbbell, fig.height=13}
-icb_payment_dumbbell <- icb_payment_scenario %>%
-  mutate(
-    ICB = reorder(ICB, Payment_Per_Registered)
-  )
-
-ggplot(
-  icb_payment_dumbbell,
-  aes(y = ICB)
-) +
-  geom_segment(
-    aes(
-      x = Payment_Per_ONS,
-      xend = Payment_Per_Registered,
-      yend = ICB
-    ),
-    colour = "grey65",
-    linewidth = 0.8
-  ) +
-  geom_point(
-    aes(x = Payment_Per_Registered, colour = "Registered population"),
-    size = 2.5
-  ) +
-  geom_point(
-    aes(x = Payment_Per_ONS, colour = "ONS population"),
-    size = 2.5
-  ) +
-  geom_text(
-    aes(
-      x = Payment_Per_Registered,
-      label = paste0(
-        gbp_symbol,
-        scales::number(Payment_Per_Registered, accuracy = 0.01)
-      )
-    ),
-    hjust = -0.10,
-    vjust = -0.7,
-    size = 2.7
-  ) +
-  geom_text(
-    aes(
-      x = Payment_Per_ONS,
-      label = paste0(
-        gbp_symbol,
-        scales::number(Payment_Per_ONS, accuracy = 0.01)
-      )
-    ),
-    hjust = -0.10,
-    vjust = 1.25,
-    size = 2.7
-  ) +
-  scale_x_continuous(
-    labels = function(x) paste0(
-      gbp_symbol,
-      scales::number(x, accuracy = 1)
-    ),
-    limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.24))
-  ) +
-  scale_colour_manual(values = c(
-    "Registered population" = "#2166AC",
-    "ONS population" = "#B2182B"
-  )) +
-  labs(
-    title = "Payment per person by NHS integrated care board",
-    subtitle = paste(
-      "Payment data snapshot:",
-      format(payment_snapshot_date, "%B %Y"),
-      "| Population snapshot:",
-      format(snapshot_date, "%B %Y")
-    ),
-    x = "Payment per person",
-    y = NULL,
-    colour = NULL
-  ) +
-  theme_minimal(base_size = 10) +
-  theme(
-    legend.position = "top",
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor = element_blank()
-  )
-```
-
-## Potential overall payment reduction by NHS England region
-
-```{r regional-payment-reduction-chart, fig.height=7}
-ggplot(
-  regional_payment_scenario,
-  aes(
+payment_currency <- function(x, accuracy = 1) {
+  scales::dollar(x, prefix = gbp_symbol, accuracy = accuracy)
+}
+payment_loss_chart <- function(data, geography, title) {
+  ggplot(data, aes(
     x = Potential_Reduction,
-    y = reorder(NHS_Region, Potential_Reduction),
-    fill = Potential_Reduction
-  )
-) +
-  geom_vline(xintercept = 0, colour = "grey55") +
-  geom_col() +
-  scale_x_continuous(
-    labels = scales::label_currency(
-      prefix = "£",
-      scale = 1e-6,
-      suffix = "m"
-    )
-  ) +
-  scale_fill_gradient2(
-    low = "#B2182B",
-    mid = "grey90",
-    high = "#2166AC",
-    midpoint = 0,
-    guide = "none"
-  ) +
-  labs(
-    title = "Potential overall payment reduction by NHS England region",
-    subtitle = "Registered-patient payment rate applied to the ONS population",
-    x = "Potential reduction",
-    y = NULL
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(panel.grid.major.y = element_blank())
-```
-
-## Potential overall payment reduction by integrated care board
-
-```{r icb-payment-reduction-chart, fig.height=13}
-ggplot(
-  icb_payment_scenario,
-  aes(
-    x = Potential_Reduction,
-    y = reorder(ICB, Potential_Reduction),
-    fill = Potential_Reduction
-  )
-) +
-  geom_vline(xintercept = 0, colour = "grey55") +
-  geom_col() +
-  scale_x_continuous(
-    labels = scales::label_currency(
-      prefix = "£",
-      scale = 1e-6,
-      suffix = "m"
-    )
-  ) +
-  scale_fill_gradient2(
-    low = "#B2182B",
-    mid = "grey90",
-    high = "#2166AC",
-    midpoint = 0,
-    guide = "none"
-  ) +
-  labs(
-    title = "Potential overall payment reduction by NHS integrated care board",
-    subtitle = "Registered-patient payment rate applied to the ONS population",
-    x = "Potential reduction",
-    y = NULL
-  ) +
-  theme_minimal(base_size = 10) +
-  theme(panel.grid.major.y = element_blank())
-```
-
-## Illustrative payment impact if registered lists converged to ONS population
-
-The payment-per-person charts above hold total payments fixed and change only the population denominator. The following charts show a different scenario: total payments are allowed to change with patient numbers.
-
-For each geography, the current payment per registered patient is held constant and applied to the ONS population:
-
-\[
-\text{Modelled payments}
-=
-\text{Current payments}
-\times
-\frac{\text{ONS population}}{\text{Registered patients}}
-\]
-
-The modelled change is therefore the difference between current payments and this ONS-population-based payment total. This is an illustrative proportional-payment scenario, not a forecast of the actual contractual payment change that would occur if practice lists fell.
-
-### Current and modelled payments by NHS England region
-
-```{r regional-current-vs-modelled-payments, fig.height=7}
-regional_payment_impact <- regional_payment_scenario %>%
-  mutate(
-    Modelled_Payments = ONS_Adjusted_Payments,
-    Payment_Change = Modelled_Payments - Total_Payments,
-    Payment_Change_Pct =
-      100 * Payment_Change / Total_Payments,
-    NHS_Region = reorder(NHS_Region, abs(Payment_Change)),
-    Change_Label = paste0(
-      case_when(
-        Payment_Change < 0 ~ "-",
-        Payment_Change > 0 ~ "+",
-        TRUE ~ ""
-      ),
-      gbp_symbol,
-      scales::number(
-        abs(Payment_Change) / 1e6,
-        accuracy = 0.1
-      ),
-      "m (",
-      sprintf("%.1f%%", abs(Payment_Change_Pct)),
-      ")"
-    )
-  )
-
-ggplot(
-  regional_payment_impact,
-  aes(y = NHS_Region)
-) +
-  geom_segment(
-    aes(
-      x = Total_Payments,
-      xend = Modelled_Payments,
-      yend = NHS_Region
-    ),
-    linewidth = 0.9,
-    colour = "grey65"
-  ) +
-  geom_point(
-    aes(x = Total_Payments, colour = "Current payments"),
-    size = 3
-  ) +
-  geom_point(
-    aes(
-      x = Modelled_Payments,
-      colour = "Modelled payments at ONS population"
-    ),
-    size = 3
-  ) +
-  geom_text(
-    aes(
-      x = pmax(Total_Payments, Modelled_Payments),
-      label = Change_Label
-    ),
-    hjust = -0.08,
-    size = 3.2,
-    fontface = "bold"
-  ) +
-  scale_x_continuous(
-    labels = function(x) paste0(
-      gbp_symbol,
-      scales::number(x / 1e9, accuracy = 0.01),
-      "bn"
-    ),
-    limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.30))
-  ) +
-  scale_colour_manual(values = c(
-    "Current payments" = "#2166AC",
-    "Modelled payments at ONS population" = "#B2182B"
+    y = reorder(.data[[geography]], Potential_Reduction)
   )) +
-  labs(
-    title = "Current and modelled payments by NHS England region",
-    subtitle = "Modelled payments hold current payment per registered patient constant and apply it to the ONS population",
-    x = "Total payments",
-    y = NULL,
-    colour = NULL
-  ) +
-  theme_minimal(base_size = 11) +
-  theme(
-    legend.position = "top",
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor = element_blank()
-  )
+    geom_col(fill = "#2166AC", width = 0.65) +
+    geom_text(
+      aes(label = paste0(
+        gbp_symbol, scales::number(Potential_Reduction / 1e6, accuracy = 0.1),
+        "m (", sprintf("%.1f%%", Reduction_Pct), ")"
+      )),
+      hjust = -0.08, size = 3.1
+    ) +
+    scale_x_continuous(
+      labels = scales::label_currency(prefix = gbp_symbol, scale = 1e-6, suffix = "m"),
+      limits = c(0, NA), expand = expansion(mult = c(0, 0.25))
+    ) +
+    labs(
+      title = title,
+      subtitle = paste("Payment snapshot:", format(payment_snapshot_date, "%d %b %Y"),
+                       "| Population:", format(snapshot_date, "%B %Y")),
+      x = "Modelled payment loss", y = NULL,
+      caption = "Labels show money lost and percentage of current payments."
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(panel.grid.major.y = element_blank(), panel.grid.minor = element_blank())
+}
+payment_loss_table <- function(data, geography, caption) {
+  data %>%
+    arrange(desc(Potential_Reduction)) %>%
+    transmute(
+      Geography = .data[[geography]],
+      `Current (£)` = scales::comma(Total_Payments, accuracy = 1),
+      `Rate (£/patient)` = scales::number(Payment_Per_Registered, accuracy = 0.01),
+      `List reduction (n)` = scales::comma(Registrations_Removed),
+      `Loss (£)` = scales::comma(Potential_Reduction, accuracy = 1),
+      `Remaining (£)` = scales::comma(Remaining_Payments, accuracy = 1)
+    ) %>%
+    report_table(caption = caption)
+}
 ```
 
-### Current and modelled payments by NHS integrated care board
+The payment measure is **Total NHS Payments to General Practice Minus Deductions**, using the latest available payment snapshot (`r format(payment_snapshot_date, "%d %B %Y")`). Population counts refer to `r format(snapshot_date, "%B %Y")`; the payment period and population snapshot are therefore not identical. Payment totals relate to the annual payment records, not one month's expenditure.
 
-```{r icb-current-vs-modelled-payments, fig.height=13}
-icb_payment_impact <- icb_payment_scenario %>%
-  mutate(
-    Modelled_Payments = ONS_Adjusted_Payments,
-    Payment_Change = Modelled_Payments - Total_Payments,
-    Payment_Change_Pct =
-      100 * Payment_Change / Total_Payments,
-    ICB = reorder(ICB, abs(Payment_Change)),
-    Change_Label = paste0(
-      case_when(
-        Payment_Change < 0 ~ "-",
-        Payment_Change > 0 ~ "+",
-        TRUE ~ ""
-      ),
-      gbp_symbol,
-      scales::number(
-        abs(Payment_Change) / 1e6,
-        accuracy = 0.1
-      ),
-      "m (",
-      sprintf("%.1f%%", abs(Payment_Change_Pct)),
-      ")"
-    )
-  )
+Amounts without a region assignment are `r payment_currency(payment_unassigned_region)`, alongside `r scales::comma(registered_unassigned_region)` registrations without a region assignment. Amounts without an ICB assignment are `r payment_currency(payment_unassigned_icb)`, alongside `r scales::comma(registered_unassigned_icb)` registrations without an ICB assignment. These national records are outside the corresponding local estimates.
 
-ggplot(
-  icb_payment_impact,
-  aes(y = ICB)
-) +
-  geom_segment(
-    aes(
-      x = Total_Payments,
-      xend = Modelled_Payments,
-      yend = ICB
-    ),
-    linewidth = 0.8,
-    colour = "grey65"
-  ) +
-  geom_point(
-    aes(x = Total_Payments, colour = "Current payments"),
-    size = 2.5
-  ) +
-  geom_point(
-    aes(
-      x = Modelled_Payments,
-      colour = "Modelled payments at ONS population"
-    ),
-    size = 2.5
-  ) +
-  geom_text(
-    aes(
-      x = pmax(Total_Payments, Modelled_Payments),
-      label = Change_Label
-    ),
-    hjust = -0.08,
-    size = 2.8
-  ) +
-  scale_x_continuous(
-    labels = function(x) paste0(
-      gbp_symbol,
-      scales::number(x / 1e6, accuracy = 0.1),
-      "m"
-    ),
-    limits = c(0, NA),
-    expand = expansion(mult = c(0, 0.32))
-  ) +
-  scale_colour_manual(values = c(
-    "Current payments" = "#2166AC",
-    "Modelled payments at ONS population" = "#B2182B"
-  )) +
-  labs(
-    title = "Current and modelled payments by NHS integrated care board",
-    subtitle = "The labelled difference is the illustrative payment change if registered lists converged to ONS population",
-    x = "Total payments",
-    y = NULL,
-    colour = NULL
-  ) +
-  theme_minimal(base_size = 9.5) +
-  theme(
-    legend.position = "top",
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor = element_blank()
-  )
+## National loss
+
+At the national calculated rate of **`r payment_currency(national_payment_scenario$Payment_Per_Registered, accuracy = 0.01)` per registered patient**, a modelled removal of **`r scales::comma(national_payment_scenario$Registrations_Removed)` registrations** produces a potential loss of **`r payment_currency(national_payment_scenario$Potential_Reduction)`** (`r sprintf("%.1f%%", national_payment_scenario$Reduction_Pct)` of current payments). This is subtracted from **`r payment_currency(national_payment_scenario$Total_Payments)`**, leaving **`r payment_currency(national_payment_scenario$Remaining_Payments)`**.
+
+```{r national-payment-loss-chart, fig.height=3.5}
+payment_loss_chart(national_payment_scenario, "Geography", "Potential national payment loss")
 ```
 
-```{r payment-tables}
-national_payment_scenario %>%
-  transmute(
-    Geography,
-    `Total payments` =
-      scales::dollar(Total_Payments, prefix = "£", accuracy = 1),
-    `Payment per registered patient` =
-      scales::dollar(Payment_Per_Registered, prefix = "£", accuracy = 0.01),
-    `Payment per ONS resident` =
-      scales::dollar(Payment_Per_ONS, prefix = "£", accuracy = 0.01),
-    `Potential payment reduction` =
-      scales::dollar(Potential_Reduction, prefix = "£", accuracy = 1)
-  ) %>%
-  knitr::kable(caption = "National payment scenario")
+```{r national-payment-loss-table, results='asis'}
+payment_loss_table(national_payment_scenario, "Geography", "National payment loss scenario")
+```
 
-regional_payment_scenario %>%
-  arrange(desc(Potential_Reduction)) %>%
-  transmute(
-    `NHS England region` = NHS_Region,
-    `Total payments` =
-      scales::dollar(Total_Payments, prefix = "£", accuracy = 1),
-    `Payment per registered patient` =
-      scales::dollar(Payment_Per_Registered, prefix = "£", accuracy = 0.01),
-    `Payment per ONS resident` =
-      scales::dollar(Payment_Per_ONS, prefix = "£", accuracy = 0.01),
-    `Potential payment reduction` =
-      scales::dollar(Potential_Reduction, prefix = "£", accuracy = 1)
-  ) %>%
-  knitr::kable(caption = "Regional payment scenario")
+## Loss by NHS England region
 
-icb_payment_scenario %>%
-  arrange(desc(Potential_Reduction)) %>%
-  transmute(
-    ICB,
-    `Total payments` =
-      scales::dollar(Total_Payments, prefix = "£", accuracy = 1),
-    `Payment per registered patient` =
-      scales::dollar(Payment_Per_Registered, prefix = "£", accuracy = 0.01),
-    `Payment per ONS resident` =
-      scales::dollar(Payment_Per_ONS, prefix = "£", accuracy = 0.01),
-    `Potential payment reduction` =
-      scales::dollar(Potential_Reduction, prefix = "£", accuracy = 1)
-  ) %>%
-  knitr::kable(caption = "ICB payment scenario")
+```{r regional-payment-loss-chart, fig.height=7}
+payment_loss_chart(regional_payment_scenario, "NHS_Region",
+                   "Potential payment loss by NHS England region")
+```
+
+```{r regional-payment-loss-table, results='asis'}
+payment_loss_table(regional_payment_scenario, "NHS_Region", "Regional payment loss scenarios")
+```
+
+## Loss by integrated care board
+
+```{r icb-payment-loss-chart, fig.height=13}
+payment_loss_chart(icb_payment_scenario, "ICB",
+                   "Potential payment loss by ICB (April 2026 geography)")
+```
+
+```{r icb-payment-loss-table, results='asis'}
+payment_loss_table(icb_payment_scenario, "ICB", "ICB payment loss scenarios")
 ```
 
 ## Data sources

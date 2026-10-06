@@ -19,6 +19,13 @@ stopifnot(
   x$welsh_lsoa_count == 2, x$welsh_patients == 20,
   x$other_patients == 8, x$english_patients == 100,
   x$english_lsoas_without_imd == 2, x$english_patients_without_imd == 40,
+  x$english_patients_absent_from_imd == 30,
+  x$english_patients_invalid_imd == 10,
+  x$english_patients_without_imd ==
+    x$english_patients_absent_from_imd + x$english_patients_invalid_imd,
+  sum(x$linkage_audit$Registered) == x$lsoa_total,
+  sum(x$linkage_audit$Registered[x$linkage_audit$Linkage_Status ==
+    "Other or unassigned residence"]) == 8,
   x$imd_patients == 60, x$lsoa_imd_difference == 68,
   x$practice_imd_difference == 70,
   x$lsoa_imd_difference == x$welsh_patients + x$other_patients +
@@ -32,7 +39,9 @@ complete$imd_lookup <- data.frame(LSOA_Code = c("E011", "E012", "E013"),
                                   IMD_Decile = c(1, 5, 10))
 y <- do.call(summarise_registration_coverage, complete)
 stopifnot(y$english_patients_without_imd == 0, y$imd_patients == 100,
-          y$lsoa_imd_difference == 28)
+          y$lsoa_imd_difference == 28, y$other_patients == x$other_patients,
+          y$english_patients_absent_from_imd == 0,
+          y$english_patients_invalid_imd == 0)
 # A Welsh decile from a separate index must not enter the English analysis.
 welsh_lookup <- complete
 welsh_lookup$imd_lookup <- rbind(welsh_lookup$imd_lookup,

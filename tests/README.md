@@ -34,6 +34,14 @@ causes of the particular curves in the database.
 
 # Registration coverage
 
+The coverage audit separates English codes absent from the IMD lookup from
+codes present with missing/invalid deciles. Other/unassigned residence is
+computed before the lookup and does not disappear when English IMD coverage
+improves. The report shows an expandable code-level audit and the warehouse
+IMD snapshot date, without claiming that the date identifies the index edition.
+The IMD extract no longer uses MAX(decile) to conceal conflicting records;
+exact duplicate records are removed, while conflicting LSOA keys fail validation.
+
 Run `Rscript tests/test_registration_coverage.R` from the repository root.
 These base R fixtures check the practice-to-LSOA source difference, Welsh LSOA
 and patient counts, other/unassigned residence, and additional English IMD

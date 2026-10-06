@@ -472,6 +472,54 @@ Within the English subset, **`r scales::comma(registration_coverage$english_pati
 
 Consequently, the deprivation analyses contain **`r scales::comma(registration_coverage$imd_patients)` registered patients**: `r coverage_difference_text(registration_coverage$imd_patients, registration_coverage$lsoa_total, "unfiltered LSOA-level")`, and `r coverage_difference_text(registration_coverage$imd_patients, registration_coverage$practice_total, "practice-level")`. The reduction from the unfiltered LSOA total is the sum of Welsh-residence exclusions, other/unassigned-residence exclusions and the additional English IMD-linkage exclusions. The comparison with the practice total also includes the initial practice-versus-LSOA source difference. These are differences in aggregate registration counts, not evidence identifying individual ghost patients.
 
+## Checking residence codes and IMD linkage
+
+The other/unassigned-residence count is calculated from the registration source before joining IMD. Changing the IMD edition cannot assign a deprivation decile to a registration with no usable residence LSOA. Welsh residence, other/unassigned residence and English LSOAs failing IMD linkage are separate exclusions. The tables below show both the reasons and the actual unmatched codes so these counts can be checked without combining them.
+
+```{r registration-imd-source-date, results='asis'}
+imd_source_dates <- sort(unique(as.Date(imd_lookup$IMD_Source_Date)))
+imd_source_date_text <- if (length(imd_source_dates) == 0L || anyNA(imd_source_dates)) {
+  "unavailable"
+} else {
+  paste(format(imd_source_dates, "%d %B %Y"), collapse = ", ")
+}
+cat(paste0("The IMD lookup uses the latest warehouse snapshot: **",
+           imd_source_date_text, "**. This date alone does not identify the IMD edition or LSOA geography.\n"))
+```
+
+[IMD 2019 uses 2011 LSOAs; IMD 2025 uses 2021 LSOAs](https://assets.publishing.service.gov.uk/media/68ff59c80f801e57b5bef907/ID_2025_Technical_Report.pdf). The July 2024 registration source uses 2021 LSOAs. If retaining the deprivation measure available in 2024, use IMD 2019 with a documented 2021-to-2011 geography mapping; [ONS has used such a mapping to assign 2019 deprivation classifications to Census 2021 LSOAs](https://www.ons.gov.uk/peoplepopulationandcommunity/healthandsocialcare/healthandwellbeing/articles/generalhealthbyagesexanddeprivationenglandandwales/census2021). A crosswalk changes the geography, not the IMD edition. Splits or mergers need a documented allocation and must not duplicate registration counts or average decile labels.
+
+Alternatively, a retrospective analysis can join 2024 registrations directly to IMD 2025 on matching 2021 LSOA codes, but must label the result as **2024 registrations classified by IMD 2025**, rather than deprivation measured in 2024. The two index editions are not interchangeable. This report does not automatically convert between them or fill missing residence with guessed deciles. Remaining valid English codes absent from the lookup should be investigated for geography, formatting or source-coverage problems.
+
+```{r registration-imd-linkage-summary, results='asis'}
+registration_coverage$linkage_audit %>%
+  group_by(Linkage_Status) %>%
+  summarise(
+    `Residence-code rows` = n(),
+    `Registered patients` = sum(Registered),
+    .groups = "drop"
+  ) %>%
+  mutate(`Registered patients` = scales::comma(`Registered patients`)) %>%
+  rename(`Linkage status` = Linkage_Status) %>%
+  report_table(caption = "Residence exclusions and English IMD linkage status")
+```
+
+```{r registration-imd-unmatched-codes, results='asis'}
+registration_coverage$linkage_audit %>%
+  filter(!Linkage_Status %in% c(
+    "English LSOA: valid IMD decile",
+    "Welsh residence: separate deprivation index"
+  )) %>%
+  arrange(desc(Registered), LSOA_Code) %>%
+  transmute(
+    `LSOA/residence code` = if_else(is.na(LSOA_Code), "<missing>", LSOA_Code),
+    `Registered patients` = scales::comma(Registered),
+    `Reason excluded` = Linkage_Status,
+    `Lookup IMD decile` = if_else(is.na(IMD_Decile), "Unavailable", as.character(IMD_Decile))
+  ) %>%
+  report_table(caption = "Other/unassigned residence and English codes without valid IMD")
+```
+
 # Scope and interpretation
 
 This report compares GP registered-patient counts with ONS population estimates for England from July 2015 onwards. ONS estimates are restricted to England. National and age/sex registered-patient series are practice-based and therefore include all patients registered with English GP practices. LSOA-derived analyses explicitly restrict registered patients to English residence LSOAs before IMD, NHS region and ICB aggregation. Percentage difference is defined as:

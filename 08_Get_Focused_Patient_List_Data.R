@@ -186,17 +186,16 @@ lsoa_ons_july <- DBI::dbGetQuery(
 imd_lookup <- DBI::dbGetQuery(
   con,
   "
-    SELECT
+    SELECT DISTINCT
       LSOA_Code,
-      MAX(IMD_Decile) AS IMD_Decile,
-      MAX(Effective_Snapshot_Date) AS IMD_Source_Date
+      IMD_Decile,
+      Effective_Snapshot_Date AS IMD_Source_Date
     FROM Demography.Index_Of_Multiple_Deprivation_By_LSOA1
     WHERE Effective_Snapshot_Date = (
       SELECT MAX(Effective_Snapshot_Date)
       FROM Demography.Index_Of_Multiple_Deprivation_By_LSOA1
     )
       AND LSOA_Code LIKE 'E01%'
-    GROUP BY LSOA_Code
   "
 )
 

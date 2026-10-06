@@ -1666,10 +1666,24 @@ fixed_payment_rate_chart <- function(data, geography, title) {
     ) +
     geom_point(aes(x = Payment_Per_Registered, colour = "Registered population"), size = 3) +
     geom_point(aes(x = Payment_Per_ONS, colour = "ONS population"), size = 3, na.rm = TRUE) +
+    geom_text(
+      aes(x = Payment_Per_Registered,
+          label = payment_currency(Payment_Per_Registered, accuracy = 0.01),
+          colour = "Registered population"),
+      nudge_y = 0.22, size = 3, show.legend = FALSE
+    ) +
+    geom_text(
+      aes(x = Payment_Per_ONS,
+          label = payment_currency(Payment_Per_ONS, accuracy = 0.01),
+          colour = "ONS population"),
+      nudge_y = -0.22, size = 3, na.rm = TRUE, show.legend = FALSE
+    ) +
     scale_colour_manual(values = c(
       "Registered population" = "#2166AC", "ONS population" = "#B2182B"
     )) +
-    scale_x_continuous(labels = function(x) payment_currency(x, accuracy = 1)) +
+    scale_x_continuous(labels = function(x) payment_currency(x, accuracy = 1),
+                       expand = expansion(mult = c(0.15, 0.18))) +
+    coord_cartesian(clip = "off") +
     labs(
       title = title,
       subtitle = paste("Payment snapshot:", format(payment_snapshot_date, "%d %b %Y"),
@@ -1679,7 +1693,7 @@ fixed_payment_rate_chart <- function(data, geography, title) {
     ) +
     theme_minimal(base_size = 11) +
     theme(legend.position = "top", panel.grid.major.y = element_blank(),
-          panel.grid.minor = element_blank())
+          panel.grid.minor = element_blank(), plot.margin = margin(8, 25, 8, 8))
 }
 
 fixed_payment_rate_table <- function(data, geography, caption) {

@@ -48,3 +48,28 @@ filter, including Welsh and other/unassigned records. Difference is the
 practice total minus the GP LSOA total, and percentage difference divides by
 the practice total. It is not a GP-versus-ONS comparison and does not itself
 identify ghost patients.
+
+## Published mid-2024 ONS age reference
+
+`ons_mid2024_age_band_reference.csv` is a fixed benchmark extracted from ONS
+`mye24tablesew.xlsx`, edition **Mid-2024: 2023 local authority boundaries**, released
+30 July 2025. Source: [ONS edition page](https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/datasets/estimatesofthepopulationforenglandandwales/mid20242023localauthorityboundaries)
+and [workbook](https://www.ons.gov.uk/file?uri=%2Fpeoplepopulationandcommunity%2Fpopulationandmigration%2Fpopulationestimates%2Fdatasets%2Festimatesofthepopulationforenglandandwales%2Fmid20242023localauthorityboundaries%2Fmye24tablesew.xlsx).
+
+The `MYE2 - Persons` worksheet has single-year columns, plus a final 90+
+column. For each of country codes E92000001 (England), W92000004 (Wales), and
+K04000001 (England and Wales), sum 0 through 9, 10 through 19, and so on,
+retaining the published 90+ cell. The 0–9 calculation uses columns E:N, excludes
+age ten in column O, and does not add male/female rows to Persons. All bands
+sum to the published all-age country totals; England plus Wales reconciles
+with England and Wales in every band.
+
+This benchmark retains its publication vintage and does not replace warehouse
+estimates. Its reference date is 30 June 2024. A warehouse Effective_Snapshot_Date
+of July 2024 does not establish which reference year or revision was loaded.
+The focused report shows discrepancies explicitly. Its England-only denominator
+remains appropriate for the existing scope; Welsh totals are shown for comparison.
+
+Both reports now use identical ten-year age boundaries. The older report's
+previous 0–10/11–20 SQL groups and relabelling of registered 0–9 as 0–10 have
+been corrected, including separate 80–89 and 90+ bands.

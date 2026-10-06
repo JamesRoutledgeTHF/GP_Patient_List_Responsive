@@ -1633,6 +1633,134 @@ payment_loss_chart(icb_payment_scenario, "ICB",
 payment_loss_table(icb_payment_scenario, "ICB", "ICB payment loss scenarios")
 ```
 
+# Average payment with total payments held constant
+
+This comparison keeps the **full observed annual payment total unchanged** for each geography and changes only the population denominator:
+
+\[
+\text{Registered-population average} = \frac{\text{Current total payments}}{\text{Registered patients}}
+\qquad
+\text{ONS-population average} = \frac{\text{Current total payments}}{\text{ONS residents}}
+\]
+
+For example, £1,650,000 divided by 10,000 registrations is **£165.00 per registered patient**. Keeping that same £1,650,000 and dividing by 9,000 ONS residents gives **£183.33 per resident**, an increase of **11.11%** in the average. Where ONS residents exceed registrations, the average falls. This comparison uses the full payment total, with no deduction from it; the preceding loss scenario instead removes money with each removed registration.
+
+The charts use the same practice-based registration totals, payment metric and source dates as the loss charts. ONS denominators are England-resident population estimates. Regional and ICB registrations and payments follow practice assignment, while ONS populations follow residence; cross-boundary registration can therefore affect the comparison. ICBs use April 2026 geography. Each average is calculated from the geography's total payments divided by its total population, rather than an unweighted mean of practice averages. A change in the average does not represent extra income or a payment loss.
+
+```{r fixed-total-payment-prepare, include=FALSE}
+national_fixed_payment_rates <- model_fixed_total_payment_rates(national_payment_scenario)
+regional_fixed_payment_rates <- model_fixed_total_payment_rates(regional_payment_scenario)
+icb_fixed_payment_rates <- model_fixed_total_payment_rates(icb_payment_scenario)
+
+fixed_payment_rate_chart <- function(data, geography, title) {
+  chart_data <- data %>%
+    mutate(Rate_Geography = .data[[geography]]) %>%
+    arrange(Payment_Per_Registered)
+  chart_data$Rate_Geography <- factor(
+    chart_data$Rate_Geography, levels = unique(chart_data$Rate_Geography)
+  )
+  ggplot(chart_data, aes(y = Rate_Geography)) +
+    geom_segment(
+      aes(x = Payment_Per_Registered, xend = Payment_Per_ONS, yend = Rate_Geography),
+      colour = "grey65", linewidth = 0.8, na.rm = TRUE
+    ) +
+    geom_point(aes(x = Payment_Per_Registered, colour = "Registered population"), size = 3) +
+    geom_point(aes(x = Payment_Per_ONS, colour = "ONS population"), size = 3, na.rm = TRUE) +
+    scale_colour_manual(values = c(
+      "Registered population" = "#2166AC", "ONS population" = "#B2182B"
+    )) +
+    scale_x_continuous(labels = function(x) payment_currency(x, accuracy = 1)) +
+    labs(
+      title = title,
+      subtitle = paste("Payment snapshot:", format(payment_snapshot_date, "%d %b %Y"),
+                       "| Population:", format(snapshot_date, "%B %Y")),
+      x = "Average annual payment per person", y = NULL, colour = "Population denominator",
+      caption = "Each geography's total payments stay unchanged; only the denominator changes."
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "top", panel.grid.major.y = element_blank(),
+          panel.grid.minor = element_blank())
+}
+
+fixed_payment_rate_table <- function(data, geography, caption) {
+  data %>%
+    arrange(desc(Payment_Per_Registered)) %>%
+    transmute(
+      Geography = .data[[geography]],
+      `Total payments (£)` = scales::comma(Total_Payments, accuracy = 1),
+      `Registered, n` = scales::comma(Registered),
+      `ONS, n` = scales::comma(ONS),
+      `£/registered patient` = scales::number(Payment_Per_Registered, accuracy = 0.01),
+      `£/ONS resident` = if_else(is.na(Payment_Per_ONS), "Unavailable",
+                                scales::number(Payment_Per_ONS, accuracy = 0.01)),
+      `Change (£/person)` = if_else(is.na(Rate_Change), "Unavailable",
+                                   scales::number(Rate_Change, accuracy = 0.01)),
+      `Change (%)` = if_else(is.na(Rate_Change_Pct), "Not defined",
+                             sprintf("%.2f%%", Rate_Change_Pct))
+    ) %>%
+    report_table(caption = caption)
+}
+```
+
+## National average payment
+
+```{r national-fixed-total-payment-chart, fig.width=8, fig.height=5}
+national_fixed_payment_rates %>%
+  select(Payment_Per_Registered, Payment_Per_ONS) %>%
+  pivot_longer(everything(), names_to = "Denominator", values_to = "Average_Payment") %>%
+  mutate(Denominator = factor(
+    Denominator, levels = c("Payment_Per_Registered", "Payment_Per_ONS"),
+    labels = c("Registered population", "ONS population")
+  )) %>%
+  ggplot(aes(x = Denominator, y = Average_Payment, fill = Denominator)) +
+  geom_col(width = 0.6, na.rm = TRUE) +
+  geom_text(aes(label = payment_currency(Average_Payment, accuracy = 0.01)),
+            vjust = -0.5, size = 4, na.rm = TRUE) +
+  scale_fill_manual(values = c(
+    "Registered population" = "#2166AC", "ONS population" = "#B2182B"
+  )) +
+  scale_y_continuous(labels = function(x) payment_currency(x, accuracy = 1),
+                     expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "National average payment with total payments unchanged",
+    subtitle = paste("Payment snapshot:", format(payment_snapshot_date, "%d %b %Y"),
+                     "| Population:", format(snapshot_date, "%B %Y")),
+    x = "Population denominator", y = "Average annual payment per person",
+    caption = "The full national payment total is used in both bars."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none", panel.grid.minor = element_blank())
+```
+
+```{r national-fixed-total-payment-table, results='asis'}
+fixed_payment_rate_table(national_fixed_payment_rates, "Geography",
+                         "National average payments with the total held constant")
+```
+
+## Average payment by NHS England region
+
+```{r regional-fixed-total-payment-chart, fig.height=7}
+fixed_payment_rate_chart(regional_fixed_payment_rates, "NHS_Region",
+                         "Regional average payments with total payments unchanged")
+```
+
+```{r regional-fixed-total-payment-table, results='asis'}
+fixed_payment_rate_table(regional_fixed_payment_rates, "NHS_Region",
+                         "Regional average payments with each total held constant")
+```
+
+## Average payment by integrated care board
+
+```{r icb-fixed-total-payment-chart, fig.height=13}
+fixed_payment_rate_chart(icb_fixed_payment_rates, "ICB",
+                         "ICB average payments with totals unchanged (April 2026 geography)")
+```
+
+```{r icb-fixed-total-payment-table, results='asis'}
+fixed_payment_rate_table(icb_fixed_payment_rates, "ICB",
+                         "ICB average payments with each total held constant")
+```
+
 ## Data sources
 
 - GP registered-patient national, age, and sex data: Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1.

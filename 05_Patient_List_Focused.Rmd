@@ -526,6 +526,8 @@ ggplot(
 
 # Age over time
 
+Age bands contain completed ages 0–9, 10–19, and so on, with 90+ as the final band. Both sources use the same boundaries. The ONS curves include English residence LSOAs only; Welsh residents are excluded. Registered counts include patients of English GP practices, irrespective of residence.
+
 ```{r age-time-series, fig.height=10}
 ggplot(
   age_time_series,
@@ -553,7 +555,7 @@ ggplot(
   scale_y_continuous(labels = scales::label_number(scale = 1e-6, suffix = "m")) +
   labs(
     title = "Population by age over time",
-    subtitle = "Registered patients and ONS estimates",
+    subtitle = "English GP registrations and England-only ONS estimates; matching ten-year age bands",
     x = NULL,
     y = "Population",
     colour = NULL,
@@ -564,6 +566,38 @@ ggplot(
     legend.position = "top",
     panel.grid.minor = element_blank()
   )
+```
+
+## Checking the mid-2024 age totals
+
+The [published ONS mid-2024 workbook](https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/datasets/estimatesofthepopulationforenglandandwales/mid20242023localauthorityboundaries) gives **6,795,519** people aged 0–9 in England and Wales: **6,473,967 in England** and **321,552 in Wales**. The England figure is the relevant geographic comparator for this report. Including age ten would instead give 7,169,868 for England, so a 0–10 total must never be labelled or compared as 0–9.
+
+The expandable table compares the database's July 2024 snapshot with the published mid-2024 reference for every band. A database snapshot date does not by itself establish the ONS reference year or publication vintage. If the England totals differ after using the same age boundaries, check the warehouse's estimate year, revisions, completeness and duplicate records. Do not replace database values simply to force agreement with the benchmark. The national age/sex extracts are also checked against their own source totals so excluded age or sex records cannot disappear silently.
+
+```{r ons-mid2024-age-reference, results='asis'}
+ons_mid2024_reference <- readr::read_csv(
+  "data/ons_mid2024_age_band_reference.csv", show_col_types = FALSE
+)
+ons_database_2024 <- ons_demographic_time_series %>%
+  filter(Period == as.Date("2024-07-01")) %>%
+  group_by(Age_Band) %>%
+  summarise(Database_England = sum(ONS), .groups = "drop")
+
+if (nrow(ons_database_2024) > 0L) {
+  ons_mid2024_reference %>%
+    left_join(ons_database_2024, by = "Age_Band") %>%
+    transmute(
+      `Age band` = Age_Band,
+      `Database England, July 2024` = scales::comma(Database_England),
+      `Published England, mid-2024` = scales::comma(England),
+      `Published Wales, mid-2024` = scales::comma(Wales),
+      `Published England and Wales` = scales::comma(England_and_Wales),
+      `Database minus published England` = scales::comma(Database_England - England)
+    ) %>%
+    report_table(caption = "Database age totals versus the published ONS mid-2024 reference")
+} else {
+  cat("No July 2024 demographic snapshot is available in the selected database extract.\n")
+}
 ```
 
 ## Interpreting the apparent turn around 2021

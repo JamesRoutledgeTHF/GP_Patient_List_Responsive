@@ -130,6 +130,30 @@ ons_demographic_time_series <- DBI::dbGetQuery(
   dplyr::mutate(Period = as.Date(Period)) %>%
   dplyr::filter(!is.na(Sex), !is.na(Age_Band))
 
+# Age/sex extracts must account for every person in their national source.
+# This catches dropped ages, unrecognised sex labels and incomplete snapshots.
+validate_demographic_totals <- function(demographics, totals, value, source) {
+  age_totals <- demographics %>%
+    dplyr::group_by(Period) %>%
+    dplyr::summarise(Age_Total = sum(.data[[value]]), .groups = "drop")
+  check <- dplyr::full_join(
+    totals %>% dplyr::select(Period, Population), age_totals, by = "Period"
+  )
+  if (nrow(check) == 0L || any(!is.finite(check$Population)) ||
+      any(!is.finite(check$Age_Total)) ||
+      any(abs(check$Population - check$Age_Total) > 0.5)) {
+    stop(source, " age/sex totals do not reconcile with the national source. ",
+         "Check age labels, sex labels and snapshot coverage before interpreting trends.")
+  }
+}
+validate_demographic_totals(
+  practice_registered_demographic_time_series, national_registered,
+  "Registered", "Registered patient"
+)
+validate_demographic_totals(
+  ons_demographic_time_series, national_ons, "ONS", "ONS"
+)
+
 lsoa_registered_july <- DBI::dbGetQuery(
   con,
   glue::glue("

@@ -1,3 +1,18 @@
+# Age boundaries and published ONS reference
+
+Run `python3 tests/test_age_bands.py` from the repository root. It executes
+the production SQL CASE expressions for numeric fixture ages in SQLite after
+replacing TRY_CAST with CAST, checks every boundary including age ten and 90+,
+checks the older report's registered-age labels, and reconciles the published
+England/Wales reference. This does not execute SQL Server, validate its handling
+of nonnumeric ages, or replace an R render against the warehouse.
+
+The focused loader now requires each age/sex extract to reconcile with its
+national source total. The mid-2024 reference audit compares the database's
+July 2024 snapshot with a fixed, sourced publication; differences may indicate
+reference-year/vintage differences or warehouse coverage issues. It does not
+overwrite database estimates or imply that a snapshot date proves the ONS year.
+
 # Payment reduction and report tables
 
 Run `Rscript tests/test_payment_reduction.R` from the repository root. The

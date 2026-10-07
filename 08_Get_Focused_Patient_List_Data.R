@@ -183,6 +183,38 @@ lsoa_ons_july <- DBI::dbGetQuery(
 ) %>%
   dplyr::mutate(Period = as.Date(Period))
 
+# July-only LSOA histories for the deprivation quintile trend charts.
+# Dates reflect available warehouse snapshots; no missing years are imputed.
+lsoa_registered_history <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT LSOA_Code, Effective_Snapshot_Date AS Period,
+      SUM(Size) AS Population
+    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
+    WHERE Effective_Snapshot_Date >= '{start_sql}'
+      AND Effective_Snapshot_Date <= '{end_sql}'
+      AND MONTH(Effective_Snapshot_Date) = 7
+      AND LSOA_Code LIKE 'E01%'
+    GROUP BY LSOA_Code, Effective_Snapshot_Date
+    ORDER BY Effective_Snapshot_Date, LSOA_Code
+  ")
+) %>% dplyr::mutate(Period = as.Date(Period), Source = "Registered patients")
+
+lsoa_ons_history <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT Area_Code AS LSOA_Code, Effective_Snapshot_Date AS Period,
+      SUM(Size) AS Population
+    FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
+    WHERE Effective_Snapshot_Date >= '{start_sql}'
+      AND Effective_Snapshot_Date <= '{end_sql}'
+      AND MONTH(Effective_Snapshot_Date) = 7
+      AND Area_Code LIKE 'E01%'
+    GROUP BY Area_Code, Effective_Snapshot_Date
+    ORDER BY Effective_Snapshot_Date, Area_Code
+  ")
+) %>% dplyr::mutate(Period = as.Date(Period), Source = "ONS population estimate")
+
 imd_lookup <- DBI::dbGetQuery(
   con,
   "

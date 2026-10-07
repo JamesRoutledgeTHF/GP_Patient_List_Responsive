@@ -51,6 +51,12 @@ class PracticeSourceTests(unittest.TestCase):
                          ("P1", "2024-10-01", "MALE", "6", 31),
                          ("P1", "2025-01-01", "FEMALE", "5", 999)]
         self.db.executemany(f"INSERT INTO {practice} VALUES (?,?,?,?,?)", practice_rows)
+        ons = "Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1"
+        self.db.execute(f"CREATE TABLE {ons} (Area_Code TEXT, Effective_Snapshot_Date TEXT, Size REAL)")
+        self.db.executemany(f"INSERT INTO {ons} VALUES (?,?,?)", [
+            ("E01000001", "2024-07-01", 100), ("E01000001", "2024-07-01", 30),
+            ("E01000002", "2024-07-01", 60), ("W01000001", "2024-07-01", 999),
+            ("E01000001", "2024-08-01", 999), ("E01000001", "2025-07-01", 999)])
 
     def tearDown(self):
         self.db.close()
@@ -88,13 +94,13 @@ class PracticeSourceTests(unittest.TestCase):
         chunks = re.findall(r"^```\{r\s+([^,}\s]+)[^\n]*\}\n(.*?)^```", REPORT, re.M | re.S)
         charts = [(name, code) for name, code in chunks
                   if "label_chart(" in code and name != "setup"]
-        self.assertEqual(len(charts), 20)
+        self.assertEqual(len(charts), 22)
         for name, code in charts:
-            source = "LSOA-level registrations" if name == "imd-snapshot-chart" else "Practice-level registrations"
+            source = "LSOA-level registrations" if name in {"imd-snapshot-chart", "region-snapshot-chart", "icb-snapshot-chart"} else "Practice-level registrations"
             self.assertIn('"' + source + '"', code, name)
             if "patients-per-gp" in name:
                 self.assertIn("practice-level workforce", code)
-            if "payment" in name:
+            if "payment" in name and "per-resident" not in name:
                 self.assertIn("practice-level annual payment", code)
         names = [name for name, _ in charts]
         self.assertLess(names.index("icb-fixed-total-payment-chart"),
@@ -102,8 +108,23 @@ class PracticeSourceTests(unittest.TestCase):
         self.assertNotIn("patients-per-gp-region-percentage-difference", names)
         self.assertNotRegex(REPORT, r'label = payment_currency\([^\n]+,\s*\n\s*colour = "(?:Registered|ONS)')
         self.assertIn('colour = "grey20"', REPORT)
+        self.assertNotIn("select(-Registered, -Raw_Difference, -Pct_Difference)", REPORT)
+        self.assertIn("imd_trend_chart(\"Registered patients\"", REPORT)
+        self.assertIn("imd_trend_chart(\"ONS population estimate\"", REPORT)
+
+    def test_july_history_queries_filter_residence_and_dates(self):
+        query = query_for("lsoa_registered_history")
+        query = query.replace("MONTH(Effective_Snapshot_Date)",
+                              "CAST(strftime('%m', Effective_Snapshot_Date) AS INTEGER)")
+        self.assertEqual(self.db.execute(query).fetchall(),
+                         [("E01000001", "2024-07-01", 150),
+                          ("E01000002", "2024-07-01", 50)])
+        ons_query = query_for("lsoa_ons_history").replace("MONTH(Effective_Snapshot_Date)",
+            "CAST(strftime('%m', Effective_Snapshot_Date) AS INTEGER)")
+        self.assertEqual(self.db.execute(ons_query).fetchall(),
+                         [("E01000001", "2024-07-01", 130),
+                          ("E01000002", "2024-07-01", 60)])
 
 
 if __name__ == "__main__":
     unittest.main()
-

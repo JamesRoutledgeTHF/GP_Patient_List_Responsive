@@ -202,6 +202,7 @@ source("09_Get_LSOA_NHS_Region_Lookup.R")
 source("10_Get_Practice_Region_Lookup.R")
 DBI::dbDisconnect(con)
 source("12_Summarise_Registration_Coverage.R")
+source("14_Summarise_IMD_Trends.R")
 ```
 
 ```{r prepare-analysis-data, include=FALSE}
@@ -484,26 +485,14 @@ practice_icb_registered <- practice_registered_snapshot %>%
   group_by(ICB_Key, ICB) %>%
   summarise(Registered = sum(Registered), .groups = "drop")
 
-region_snapshot <- region_snapshot %>%
-  select(-Registered, -Raw_Difference, -Pct_Difference) %>%
+# Population comparison charts retain residence-based LSOA registrations.
+region_ons_keys <- region_snapshot %>%
   mutate(NHS_Region = normalise_region_name(NHSER26NM))
-if (nrow(anti_join(practice_region_registered, region_snapshot, by = "NHS_Region")) ||
+if (nrow(anti_join(practice_region_registered, region_ons_keys, by = "NHS_Region")) ||
     nrow(anti_join(practice_icb_registered, icb_snapshot,
                    by = c("ICB_Key" = "ICB26CD")))) {
   stop("A practice-assigned geography has no matching ONS population geography.")
 }
-region_snapshot <- region_snapshot %>%
-  left_join(practice_region_registered, by = "NHS_Region") %>%
-  mutate(Registered = replace_na(Registered, 0),
-         Raw_Difference = Registered - ONS,
-         Pct_Difference = pct_difference(Registered, ONS))
-icb_snapshot <- icb_snapshot %>%
-  select(-Registered, -Raw_Difference, -Pct_Difference) %>%
-  left_join(practice_icb_registered %>% select(ICB_Key, Registered),
-            by = c("ICB26CD" = "ICB_Key")) %>%
-  mutate(Registered = replace_na(Registered, 0),
-         Raw_Difference = Registered - ONS,
-         Pct_Difference = pct_difference(Registered, ONS))
 
 registered_unassigned_region <- national_snapshot$Registered -
   sum(practice_region_registered$Registered)
@@ -511,10 +500,13 @@ registered_unassigned_icb <- national_snapshot$Registered -
   sum(practice_icb_registered$Registered)
 for (local in list(region_snapshot, icb_snapshot)) {
   if (any(!is.finite(local$Registered)) ||
-      sum(local$Registered) > national_snapshot$Registered + 0.5 ||
+      abs(sum(local$Registered) - sum(lsoa_july_england$Registered)) > 0.5 ||
       abs(sum(local$ONS) - national_snapshot$ONS) > 0.5) {
-    stop("Geographic source totals do not reconcile with their national sources.")
+    stop("Geographic LSOA comparison totals do not reconcile with their sources.")
   }
+}
+if (registered_unassigned_region < -0.5 || registered_unassigned_icb < -0.5) {
+  stop("Assigned practice registrations exceed the national practice source.")
 }
 ```
 
@@ -522,9 +514,9 @@ for (local in list(region_snapshot, icb_snapshot)) {
 
 For `r format(snapshot_date, "%d %B %Y")` data, the practice-level registered patients data contains `r scales::comma(registration_coverage$practice_total)` registered patients, compared with `r scales::comma(registration_coverage$lsoa_total)` in the LSOA-level registered patients’ data before any filtering or linkage. The LSOA source contains `r scales::comma(abs(registration_coverage$practice_total - registration_coverage$lsoa_total))` `r ifelse(registration_coverage$lsoa_total <= registration_coverage$practice_total, "fewer", "more")` registrations than the practice-level total. [NHS England reported processing issues in the July 2024 LSOA release](https://digital.nhs.uk/data-and-information/publications/statistical/patients-registered-at-a-gp-practice/july-2024) which led to this difference.
 
-The LSOA extract also includes `r scales::comma(registration_coverage$welsh_patients)` registered patients in `r scales::comma(registration_coverage$welsh_lsoa_count)` Welsh LSOAs. Another `r scales::comma(registration_coverage$other_patients)` registrations have an unknown or other residence code and are also excluded from the IMD dataset, leaving `r scales::comma(registration_coverage$english_patients)` registrations in the English LSOAs dataset used for the IMD comparison. Welsh LSOAs have no English IMD. English registrations without a valid IMD decile exclude another `r scales::comma(registration_coverage$english_patients_without_imd)` patients from the IMD comparison.
+The LSOA extract also includes `r scales::comma(registration_coverage$welsh_patients)` registered patients in `r scales::comma(registration_coverage$welsh_lsoa_count)` Welsh LSOAs. Another `r scales::comma(registration_coverage$other_patients)` registrations have an unknown or other residence code and are also excluded from the LSOA comparison dataset, leaving `r scales::comma(registration_coverage$english_patients)` registrations in the English LSOAs dataset used for IMD, regional and ICB population comparisons. Welsh LSOAs have no English IMD. English registrations without a valid IMD decile exclude another `r scales::comma(registration_coverage$english_patients_without_imd)` patients from the IMD comparison.
 
-All charts and comparison tables use practice-level registrations except IMD deciles, which use LSOA-level registrations. Practice registrations include patients of English GP practices irrespective of residence; Welsh and unknown LSOA residence codes are therefore retained in the practice-based totals. ONS estimates cover English-resident LSOAs. Regional and April 2026 ICB registrations, workforce and payments follow practice assignment, while ONS populations follow residence. Aggregate registration differences do not identify individual ghost patients.
+IMD, regional and ICB population comparisons use residence-based LSOA registrations. The new deprivation trends also use LSOA data. All other registration charts and tables, including FTE and funding analyses, use practice-level registrations. Practice registrations include patients of English GP practices irrespective of residence; Welsh and unknown LSOA residence codes are therefore retained in the practice-based totals. The residence exclusions above apply to all LSOA population comparisons; the additional missing-IMD exclusion applies only to deprivation analyses. ONS estimates cover English-resident LSOAs. In the FTE and funding sections, regional and April 2026 ICB registrations, workforce and payments follow practice assignment, while ONS populations follow residence. Aggregate registration differences do not identify individual ghost patients.
 
 # National population over time
 
@@ -824,6 +816,71 @@ imd_snapshot %>%
   report_table(caption = "Population comparison by IMD decile (LSOA-level registrations)")
 ```
 
+# Population over time by IMD quintile
+
+These two charts use July snapshots and one fixed IMD lookup, pairing deciles 1–2 into quintile 1 (most deprived), 3–4 into quintile 2, through 9–10 into quintile 5 (least deprived). The classification is applied retrospectively; these are not historical IMD rankings.
+
+```{r imd-quintile-trend-prepare, include=FALSE}
+imd_trends <- summarise_imd_trends(
+  bind_rows(lsoa_registered_history, lsoa_ons_history), imd_lookup
+)
+imd_trend_data <- imd_trends$trend %>%
+  mutate(Quintile = factor(Quintile, levels = 1:5,
+    labels = c("1 (Most deprived)", "2", "3", "4", "5 (Least deprived)"))) %>%
+  group_by(Source, Quintile) %>%
+  arrange(Period, .by_group = TRUE) %>%
+  mutate(Year = as.integer(format(Period, "%Y")),
+         Run = cumsum(c(TRUE, diff(Year) > 1))) %>%
+  ungroup()
+imd_trend_source_date <- paste(sort(unique(as.character(imd_lookup$IMD_Source_Date))),
+                               collapse = ", ")
+imd_trend_chart <- function(source_name, title) {
+  chart_data <- imd_trend_data %>% filter(Source == source_name)
+  ggplot(chart_data, aes(Period, Population, colour = Quintile)) +
+    geom_line(aes(group = interaction(Quintile, Run)), linewidth = 0.9) +
+    geom_point(size = 2) +
+    scale_colour_manual(values = c("#7B3294", "#008837", "#D95F02", "#2166AC", "#A6761D"),
+                        drop = FALSE) +
+    scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+    scale_y_continuous(labels = scales::label_number(scale = 1e-6, suffix = "m")) +
+    labs(title = title,
+      subtitle = paste("July snapshots:", format(min(chart_data$Period), "%Y"),
+                       "to", format(max(chart_data$Period), "%Y")),
+      x = NULL, y = "Population in common LSOA cohort", colour = "IMD quintile",
+      caption = paste0(
+        "Source: ", if (source_name == "Registered patients")
+          "LSOA-level registrations by English residence." else
+          "ONS English LSOA population estimates.",
+        "\nFixed IMD classification; common LSOAs in every available snapshot of both sources.",
+        "\nMissing years are not imputed or joined across.")) +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "bottom", panel.grid.minor = element_blank(),
+          axis.text.x = element_text(angle = 45, hjust = 1),
+          plot.caption = element_text(colour = "grey20", hjust = 0))
+}
+```
+
+The shared cohort contains **`r scales::comma(length(imd_trends$lsoa_codes))` English LSOAs** with valid IMD and data in every available source snapshot. These counts describe that cohort, not the full English population. Welsh/unknown residence codes, invalid IMD and LSOAs missing from any source snapshot are excluded. The warehouse IMD snapshot is `r imd_trend_source_date`; this date alone does not establish the index edition. The coverage table shows the population retained and excluded at each date.
+
+```{r imd-quintile-ons-time-series, fig.height=6}
+imd_trend_chart("ONS population estimate", "ONS resident population over time by IMD quintile")
+```
+
+```{r imd-quintile-registered-time-series, fig.height=6}
+imd_trend_chart("Registered patients", "Registered patients over time by IMD quintile")
+```
+
+```{r imd-quintile-coverage-table, results='asis'}
+imd_trends$coverage %>%
+  transmute(Source, Snapshot = format(Period, "%d %b %Y"),
+    `English n` = scales::comma(English_Population),
+    `IMD-linked n` = scales::comma(IMD_Eligible_Population),
+    `Cohort n` = scales::comma(Cohort_Population),
+    `Excluded n` = scales::comma(Population_Excluded),
+    `Cohort LSOAs` = scales::comma(Cohort_LSOAs)) %>%
+  report_table(caption = "LSOA deprivation trend coverage")
+```
+
 # NHS England regions
 
 ```{r region-snapshot-chart, fig.height=6}
@@ -838,7 +895,7 @@ comparison_bar(
   format(snapshot_date, "%B %Y"),
   "NHS England region"
 ),
-  "Practice-level registrations"
+  "LSOA-level registrations"
 )
 ```
 
@@ -852,12 +909,12 @@ region_snapshot %>%
     `Raw difference` = scales::comma(Raw_Difference),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  report_table(caption = "Population comparison by NHS England region (Practice-level registrations)")
+  report_table(caption = "Population comparison by NHS England region (LSOA-level registrations)")
 ```
 
 # Integrated Care Boards
 
-All ICB comparisons use the new April 2026 structure while using the July 2024 data. Practice registrations, workforce and payments use the practice-to-2026-ICB mapping, including the Frimley transfers. ONS populations are reassigned through the official ONS April 2026 LSOA lookup.
+All ICB comparisons use the new April 2026 structure while using the July 2024 data. This population chart groups both registered patients and ONS residents through the official ONS April 2026 LSOA lookup, including the Frimley boundary changes. The later workforce and funding sections instead group practice registrations, workforce and payments through the practice-to-2026-ICB mapping.
 
 ```{r icb-snapshot-chart, fig.height=12}
 icb_snapshot_plot <- icb_snapshot %>%
@@ -871,7 +928,7 @@ comparison_bar(
   format(snapshot_date, "%B %Y"),
   "Integrated care board"
 ),
-  "Practice-level registrations"
+  "LSOA-level registrations"
 )
 ```
 
@@ -885,7 +942,7 @@ icb_snapshot %>%
     `Raw difference` = scales::comma(Raw_Difference),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  report_table(caption = "Population comparison by NHS integrated care board (Practice-level registrations)")
+  report_table(caption = "Population comparison by NHS integrated care board (LSOA-level registrations)")
 ```
 
 # Patients per qualified GP FTE
@@ -1427,6 +1484,26 @@ payment_loss_chart <- function(data, geography, title) {
     theme_minimal(base_size = 11) +
     theme(panel.grid.major.y = element_blank(), panel.grid.minor = element_blank())
 }
+payment_loss_per_resident_chart <- function(data, geography, title) {
+  chart_data <- data %>% filter(is.finite(Loss_Per_ONS_Resident))
+  ggplot(chart_data, aes(x = Loss_Per_ONS_Resident,
+    y = reorder(.data[[geography]], Loss_Per_ONS_Resident))) +
+    geom_col(fill = "#2166AC", width = 0.65) +
+    geom_text(aes(label = payment_currency(Loss_Per_ONS_Resident, accuracy = 0.01)),
+              colour = "grey20", hjust = -0.08, size = 3.1) +
+    scale_x_continuous(labels = function(x) payment_currency(x, accuracy = 1),
+                      limits = c(0, NA), expand = expansion(mult = c(0, 0.2))) +
+    coord_cartesian(clip = "off") +
+    labs(title = title,
+      subtitle = paste("Payment snapshot:", format(payment_snapshot_date, "%d %b %Y"),
+                       "| ONS population:", format(snapshot_date, "%B %Y")),
+      x = "Modelled annual payment loss per ONS resident", y = NULL,
+      caption = "Annual modelled loss divided by ONS residents; zero-resident rates are undefined.") +
+    theme_minimal(base_size = 11) +
+    theme(panel.grid.major.y = element_blank(), panel.grid.minor = element_blank(),
+          plot.margin = margin(6, 25, 6, 6))
+}
+
 payment_loss_table <- function(data, geography, caption) {
   data %>%
     arrange(desc(Potential_Reduction)) %>%
@@ -1439,6 +1516,17 @@ payment_loss_table <- function(data, geography, caption) {
       `Remaining (£)` = scales::comma(Remaining_Payments, accuracy = 1)
     ) %>%
     report_table(caption = paste(caption, "(Practice registrations; practice-level payments)"))
+}
+payment_loss_per_resident_table <- function(data, geography, caption) {
+  data %>% arrange(desc(Loss_Per_ONS_Resident)) %>%
+    transmute(Geography = .data[[geography]],
+      `ONS residents` = scales::comma(ONS),
+      `Practice registrations` = scales::comma(Registered),
+      `Loss (£/ONS resident)` = ifelse(is.na(Loss_Per_ONS_Resident), "Not defined",
+        scales::number(Loss_Per_ONS_Resident, accuracy = 0.01)),
+      `Loss (£/registered patient)` = scales::number(Loss_Per_Registered_Patient,
+                                                    accuracy = 0.01)) %>%
+    report_table(caption = caption)
 }
 ```
 
@@ -1591,7 +1679,7 @@ fixed_payment_rate_table(icb_fixed_payment_rates, "ICB",
 
 This section examines how much money could be removed from practices if registered lists were reduced to be in line with the ONS. It uses the calculated payment per capita before removal and multiplies it by the removed number of patients, using Total NHS Payments to General Practice Minus Deductions.
 
-For each geography, the rate is total annual payments divided by practice-level registrations; the list reduction is the positive difference between those registrations and ONS residents. The loss is the rate multiplied by that reduction, and remaining payments are current payments minus the loss. For example, £165 per patient multiplied by 1,000 removed registrations gives a £165,000 loss. Where ONS residents equal or exceed registrations, the loss is zero. Each geography uses its own rate, so local losses need not sum to the national estimate. This is an illustrative proportional-payment scenario, not a prediction of contractual losses.
+For each geography, the rate is total annual payments divided by practice-level registrations; the list reduction is the positive difference between those registrations and ONS residents. The loss is the rate multiplied by that reduction, and remaining payments are current payments minus the loss. For example, £165 per patient multiplied by 1,000 removed registrations gives a £165,000 loss. Where ONS residents equal or exceed registrations, the loss is zero. Each geography uses its own rate, so local losses need not sum to the national estimate. This is an illustrative proportional-payment scenario, not a prediction of contractual losses. The additional regional and ICB charts divide each geography's modelled annual loss by its July 2024 ONS resident population. This expresses loss per person and adjusts for population size; it does not measure density per square kilometre. The tables show both population denominators and loss per ONS resident and per registered patient. Zero ONS populations produce an undefined per-resident rate rather than zero.
 
 ```{r national-payment-loss-chart, fig.height=3.5}
 label_chart(
@@ -1616,6 +1704,20 @@ payment_loss_chart(regional_payment_scenario, "NHS_Region",
 )
 ```
 
+```{r regional-payment-loss-per-resident-chart, fig.height=7}
+label_chart(
+  payment_loss_per_resident_chart(regional_payment_scenario, "NHS_Region",
+    "Potential annual payment loss per resident by NHS England region"),
+  "Practice-level registrations",
+  "Payments: practice-level annual payment data. Per-person denominator: ONS residents."
+)
+```
+
+```{r regional-payment-loss-per-resident-table, results='asis'}
+payment_loss_per_resident_table(regional_payment_scenario, "NHS_Region",
+  "Population denominators and annual modelled loss per person")
+```
+
 ```{r regional-payment-loss-table, results='asis'}
 payment_loss_table(regional_payment_scenario, "NHS_Region", "Regional payment loss scenarios")
 ```
@@ -1629,6 +1731,20 @@ payment_loss_chart(icb_payment_scenario, "ICB",
   "Practice-level registrations",
   "Payments: practice-level annual payment data; aggregated to the chart geography."
 )
+```
+
+```{r icb-payment-loss-per-resident-chart, fig.height=13}
+label_chart(
+  payment_loss_per_resident_chart(icb_payment_scenario, "ICB",
+    "Potential annual payment loss per resident by integrated care board"),
+  "Practice-level registrations",
+  "Payments: practice-level annual payment data. Per-person denominator: ONS residents."
+)
+```
+
+```{r icb-payment-loss-per-resident-table, results='asis'}
+payment_loss_per_resident_table(icb_payment_scenario, "ICB",
+  "Population denominators and annual modelled loss per person")
 ```
 
 ```{r icb-payment-loss-table, results='asis'}

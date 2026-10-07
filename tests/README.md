@@ -1,89 +1,90 @@
-# Age boundaries and published ONS reference
+# Focused report validation
 
-Run `python3 tests/test_age_bands.py` from the repository root. It executes
-the production SQL CASE expressions for numeric fixture ages in SQLite after
-replacing TRY_CAST with CAST, checks every boundary including age ten and 90+,
-checks the older report's registered-age labels, and reconciles the published
-England/Wales reference. This does not execute SQL Server, validate its handling
-of nonnumeric ages, or replace an R render against the warehouse.
+Run the portable checks from the repository root:
 
-The focused loader now requires each age/sex extract to reconcile with its
-national source total. The mid-2024 reference audit compares the database's
-July 2024 snapshot with a fixed, sourced publication; differences may indicate
-reference-year/vintage differences or warehouse coverage issues. It does not
-overwrite database estimates or imply that a snapshot date proves the ONS year.
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py'
+```
 
-# Payment reduction and report tables
+`test_age_bands.py` executes the production age CASE expressions for numeric
+fixture ages in SQLite after replacing TRY_CAST with CAST. It checks boundaries
+including age ten and 90+, the older report's age labels, and the sourced ONS
+England/Wales reference. It does not test SQL Server nonnumeric casts.
 
-Run `Rscript tests/test_fixed_total_payment_rates.R` for the additional
-comparison holding each geography's full payment total constant. Tests check
-£165 versus £183.33 when £1,650,000 is divided by 10,000 registrations or
-9,000 ONS residents, a lower average when ONS exceeds registrations, equal
-populations, zero payments, undefined averages at zero ONS population, invalid
-inputs, unrounded rates, and independence from the loss model's remaining pot.
+`test_focused_lsoa_sources.py` executes the portable national and sex SQL
+aggregates against synthetic English, Welsh, OTHER and missing-residence records.
+It checks sex reconciliation, unfiltered source totals, date filtering, chart
+provenance, source routing and constant-payment-before-loss chart order.
+These checks do not execute R, SQL Server or the full report.
 
-The focused report retains all three payment-loss charts and adds national,
-regional and April 2026 ICB average-payment charts, with expandable tables.
-The added calculation uses the same practice registration and payment totals
-as the loss model, and changes only the population denominator. Total payments
-remain unchanged even when the ONS denominator is larger than registrations.
+Run the existing base R checks in an R environment:
 
-Run `Rscript tests/test_payment_reduction.R` from the repository root. The
-base R tests cover the £165-per-registration example, no loss where ONS equals
-or exceeds registrations, zero payments, an unrounded rate, and invalid inputs.
+```bash
+Rscript tests/test_registration_coverage.R
+Rscript tests/test_payment_reduction.R
+Rscript tests/test_fixed_total_payment_rates.R
+Rscript tests/test_paper_tables.R
+```
 
-`13_Model_Payment_Reduction.R` calculates a loss-only scenario using each
-geography's own observed payment rate. Regional/ICB estimates are independent
-of the national calculation and may not add up to it. This assumes all payment
-categories change proportionately with the unweighted registered list; it does
-not implement the actual GP contract.
+Coverage tests check practice-to-LSOA differences, disjoint Welsh/other residence
+exclusions, additional English IMD loss, invalid counts and duplicate keys.
+Payment tests check the £165 example, no reduction where ONS equals or exceeds
+registrations, zero payments, unrounded rates and invalid inputs. Fixed-total
+tests check unchanged budgets, including £165 versus £183.33 for different
+denominators, undefined ONS rates at zero population and independence from the
+loss scenario's remaining pot.
 
-The focused HTML report uses closed-by-default native `details` elements for
-every table. Each summary can be activated with a mouse or keyboard. Word
-output retains ordinary visible tables. The ONS age-trend audit uses July
-snapshots, does not bridge gaps in years, and includes source LSOA counts.
-Its discussion distinguishes supported census/migration context from unverified
-causes of the particular curves in the database.
+The optional paper-table helper and tests remain available; the focused report
+does not call them or render Tables 1 and 2.
 
-# Registration coverage
+# Report sources and structure
 
-The coverage audit separates English codes absent from the IMD lookup from
-codes present with missing/invalid deciles. Other/unassigned residence is
-computed before the lookup and does not disappear when English IMD coverage
-improves. The report shows an expandable code-level audit and the warehouse
-IMD snapshot date, without claiming that the date identifies the index edition.
-The IMD extract no longer uses MAX(decile) to conceal conflicting records;
-exact duplicate records are removed, while conflicting LSOA keys fail validation.
+Render `05_Patient_List_Focused.Rmd` with `rmarkdown::render()` in the existing
+R and warehouse environment. Its layout follows
+`05_Patient_List_Focused_Clean.docx`: disparities, population trends, July
+snapshots, IMD, regions, ICBs, GP FTE, fixed-total payments, then payment loss.
+It retains the reference's 20 chart types and 16 comparison tables.
+Word output uses that document's styles and page settings as its reference.
+The additional source-audit tables are omitted from this clean report; the
+coverage helper still provides the detailed audit for separate analysis.
 
-Run `Rscript tests/test_registration_coverage.R` from the repository root.
-These base R fixtures check the practice-to-LSOA source difference, Welsh LSOA
-and patient counts, other/unassigned residence, and additional English IMD
-exclusions. The reductions must reconcile without counting Welsh registrations
-twice. Missing counts and duplicate keys fail; a larger LSOA source total is
-reported as an increase rather than described as a loss.
+| Comparison | Registered population source | Other input |
+| --- | --- | --- |
+| National, sex, IMD, region and ICB | English-resident LSOA registrations | English LSOA ONS estimates |
+| Age and age-and-sex | Practice single-age registrations, all residence codes | English LSOA ONS estimates |
+| Patients per qualified GP FTE | English-resident LSOA registrations | Practice workforce |
+| Both payment scenarios | English-resident LSOA registrations | Practice annual payments |
 
-`12_Summarise_Registration_Coverage.R` calculates the opening narrative from
-the original registration extracts. The report checks its final deprivation
-total against the actual IMD analysis. Tables 1 and 2 are currently not rendered.
+The NHS LSOA release provides sex but no ages:
+https://digital.nhs.uk/data-and-information/publications/statistical/patients-registered-at-a-gp-practice/metadata
+Age charts remain explicitly labelled practice-data exceptions, with no inferred
+age counts. All other registration comparisons use LSOA counts. Practice totals
+are otherwise used only for the introductory source reconciliation.
 
-# Optional paper tables
+Every figure embeds its source in the caption; tables identify it too.
+Value-label text is neutral grey. Series colours remain. HTML tables start
+collapsed; Word tables remain visible. Counts are calculated from the extracts,
+so the changed population scope updates results rather than freezing the
+attachment's numbers.
 
-Run `Rscript tests/test_paper_tables.R` from the repository root. The tests need
-only base R and synthetic aggregate counts; they do not use database credentials.
+Welsh and other/unassigned residence codes are excluded from all LSOA comparison
+denominators. IMD additionally excludes English LSOAs without a valid decile;
+such codes remain in region/ICB comparisons when their geography is known.
+Practice-to-LSOA differences, residence exclusions and English IMD loss remain
+separate. The IMD snapshot date does not by itself identify the index edition.
 
-They check residence partitions (including a missing residence code), demographic
-coverage, absent LSOAs, incomplete deprivation and workforce linkage, percentage
-denominators, and the shared unrounded FTE denominator. Missing counts, duplicate
-keys, conflicting monthly workforce snapshots and inconsistent totals must fail.
+Local populations use the official ONS April 2026 lookup, retaining July 2024
+counts. Practice workforce/payments use the existing practice-to-2026-ICB map,
+including nine documented historical postcode estimates for former Frimley
+practices. See `data/README.md` for lookup provenance.
 
-`11_Build_Paper_Tables.R` and its tests are retained for optional future use.
-It is not called by the current focused report. Render
-`05_Patient_List_Focused.Rmd` in the usual database environment to populate the
-opening coverage narrative. Table 1 uses all-source totals for residence
-and demographic percentages, and English-residence totals for deprivation.
+Population denominators follow residence; workforce/payments follow practice
+assignment. These are population-to-resource comparisons, not actual practice
+workload or contracted payment predictions. Annual payment and population
+dates are disclosed separately. Local losses use local rates and positive
+differences and need not sum to the national estimate. Fixed-total averages
+retain the full budget.
 
-LSOA age/sex data are not extracted, and practice registrations cannot identify
-residence directly; the table marks these cells NE instead of assigning zero.
-The workforce denominator is the existing partner/salaried FTE measure, not the
-headline NHS fully qualified series. The IMD source snapshot is displayed, but
-its edition still needs confirmation in the paper's Methods.
+Render-time checks reconcile practice age/sex counts to practice totals, LSOA
+sex counts to English LSOA totals, national LSOA snapshots to region/ICB totals,
+and IMD counts to the coverage helper. They stop on missing snapshot sources.

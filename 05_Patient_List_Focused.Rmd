@@ -1,8 +1,8 @@
 ---
-title: "Registered patients compared with ONS population estimates"
-subtitle: "Focused national and LSOA-level analysis"
+title: "Ghost Patients Descriptive Analysis"
 output:
-  word_document: default
+  word_document:
+    reference_docx: "05_Patient_List_Focused_Clean.docx"
   html_document:
     toc: true
     toc_float: true
@@ -104,6 +104,7 @@ comparison_bar <- function(
 
   p +
     geom_text(
+    colour = "grey20",
       aes(label = sprintf("%.1f%%", Pct_Difference)),
       hjust = ifelse(data$Pct_Difference >= 0, -0.12, 1.12),
       size = 3.7
@@ -149,6 +150,19 @@ report_table <- function(x, caption = NULL, ...) {
   ))
 }
 
+# Source labels are embedded in figures, so exported charts retain provenance.
+label_chart <- function(plot, source, inputs = NULL) {
+  source_text <- paste0("Registration data: ", source,
+                        ". ONS: English LSOA population estimates.")
+  if (!is.null(inputs)) source_text <- paste(source_text, inputs)
+  existing_caption <- plot$labels$caption
+  caption_lines <- vapply(c(source_text, existing_caption), function(x) {
+    paste(strwrap(x, width = 105), collapse = "\n")
+  }, character(1))
+  plot + labs(caption = paste(caption_lines, collapse = "\n")) +
+    theme(plot.caption = element_text(colour = "grey20", hjust = 0, size = 9))
+}
+
 first_matching_column <- function(data, exact = character(), regex = NULL) {
   nm <- names(data)
 
@@ -167,7 +181,6 @@ first_matching_column <- function(data, exact = character(), regex = NULL) {
   NA_character_
 }
 ```
-
 
 ```{r report-table-style, echo=FALSE, results='asis'}
 if (knitr::is_html_output()) {
@@ -234,13 +247,15 @@ age_time_series <- demographic_time_series %>%
     )
   )
 
-sex_time_series <- demographic_time_series %>%
+ons_sex_time_series <- ons_demographic_time_series %>%
   group_by(Period, Sex) %>%
-  summarise(
-    Registered = sum_if_available(Registered),
-    ONS = sum_if_available(ONS),
-    .groups = "drop"
-  ) %>%
+  summarise(ONS = sum_if_available(ONS), .groups = "drop")
+
+sex_comparison <- full_join(
+  lsoa_registered_sex_time_series, ons_sex_time_series, by = c("Period", "Sex")
+) %>% mutate(Pct_Difference = pct_difference(Registered, ONS))
+
+sex_time_series <- sex_comparison %>%
   pivot_longer(
     cols = c(Registered, ONS),
     names_to = "Source",
@@ -265,6 +280,11 @@ national_snapshot <- national_time_series %>%
     Pct_Difference = pct_difference(Registered, ONS)
   )
 
+if (nrow(national_snapshot) != 1L ||
+    any(!is.finite(c(national_snapshot$Registered, national_snapshot$ONS)))) {
+  stop("Both English LSOA population sources are required at the selected snapshot.")
+}
+
 age_sex_snapshot <- demographic_time_series %>%
   filter(Period == snapshot_date)
 
@@ -277,7 +297,8 @@ age_snapshot <- age_sex_snapshot %>%
   ) %>%
   mutate(Pct_Difference = pct_difference(Registered, ONS))
 
-sex_snapshot <- age_sex_snapshot %>%
+sex_snapshot <- sex_comparison %>%
+  filter(Period == snapshot_date) %>%
   group_by(Sex) %>%
   summarise(
     Registered = sum(Registered, na.rm = TRUE),
@@ -351,7 +372,7 @@ lsoa_july_geography <- lsoa_july_england %>%
   inner_join(nhser_lookup, by = c("LSOA_Code" = "LSOA21CD"))
 
 registration_coverage <- summarise_registration_coverage(
-  national_registered, lsoa_registered_july, imd_lookup, snapshot_date
+  practice_national_registered, lsoa_registered_july, imd_lookup, snapshot_date
 )
 
 imd_july <- lsoa_july_england %>%
@@ -444,97 +465,27 @@ if (nrow(practice_icb_lookup) == 0) {
     "in payments2425.csv and 10_Get_Practice_Region_Lookup.R."
   )
 }
-```
-
-# Registration sources and deprivation coverage
-
-```{r opening-registration-summary-prepare, include=FALSE}
-coverage_difference_text <- function(value, reference, reference_label) {
-  difference <- value - reference
-  if (difference == 0) {
-    return(paste0("the same number of registrations as the ", reference_label, " total"))
+# National and local non-age population comparisons must share the same scope.
+for (local in list(region_snapshot, icb_snapshot)) {
+  if (abs(sum(local$Registered) - national_snapshot$Registered) > 0.5 ||
+      abs(sum(local$ONS) - national_snapshot$ONS) > 0.5) {
+    stop("National and local English LSOA population totals do not reconcile.")
   }
-  paste0(
-    scales::comma(abs(difference), accuracy = 1),
-    if (difference < 0) " fewer registrations than the " else " more registrations than the ",
-    reference_label, " total (",
-    sprintf("%.2f%%", 100 * abs(difference) / reference),
-    " of that reference total)"
-  )
 }
 ```
 
-For `r format(snapshot_date, "%d %B %Y")`, the practice-level source contains **`r scales::comma(registration_coverage$practice_total)` registered patients**, compared with **`r scales::comma(registration_coverage$lsoa_total)`** in the LSOA-level source before any residence filter or deprivation linkage. The LSOA source therefore contains `r coverage_difference_text(registration_coverage$lsoa_total, registration_coverage$practice_total, "practice-level")`. This source difference arises before any restriction to English LSOAs or linkage to IMD. [NHS England reported processing issues in the July 2024 LSOA release](https://digital.nhs.uk/data-and-information/publications/statistical/patients-registered-at-a-gp-practice/july-2024) and warned that its totals might differ from practice totals.
+# Dataset Disparities
 
-The LSOA extract includes **`r scales::comma(registration_coverage$welsh_patients)` registered patients across `r scales::comma(registration_coverage$welsh_lsoa_count)` Welsh LSOAs** (`r sprintf("%.2f%%", registration_coverage$welsh_patients_pct)` of all LSOA registrations). Welsh LSOAs do not have values in the English Index of Multiple Deprivation (IMD) used here: [Wales has a separate Welsh Index of Multiple Deprivation, whose deciles are not directly comparable with England's](https://www.gov.uk/government/statistics/english-indices-of-deprivation-2025/english-indices-of-deprivation-2025-frequently-asked-questions). Those Welsh registrations are therefore excluded from the English deprivation analysis. Another `r scales::comma(registration_coverage$other_patients)` registrations have other or unassigned residence codes and are also excluded, leaving **`r scales::comma(registration_coverage$english_patients)` registrations in English LSOAs**. Welsh registrations are already excluded by the England-residence filter and are counted once in this reduction.
+For `r format(snapshot_date, "%d %B %Y")` data, the practice-level registered patients data contains `r scales::comma(registration_coverage$practice_total)` registered patients, compared with `r scales::comma(registration_coverage$lsoa_total)` in the LSOA-level registered patients’ data before any filtering or linkage. The LSOA source contains `r scales::comma(abs(registration_coverage$practice_total - registration_coverage$lsoa_total))` `r ifelse(registration_coverage$lsoa_total <= registration_coverage$practice_total, "fewer", "more")` registrations than the practice-level total. [NHS England reported processing issues in the July 2024 LSOA release](https://digital.nhs.uk/data-and-information/publications/statistical/patients-registered-at-a-gp-practice/july-2024) which led to this difference.
 
-Within the English subset, **`r scales::comma(registration_coverage$english_patients_without_imd)` registrations in `r scales::comma(registration_coverage$english_lsoas_without_imd)` LSOAs** have no matching valid IMD decile and are excluded at the deprivation-linkage stage. `r if (registration_coverage$english_patients_without_imd == 0) "There is no further reduction in registered-patient counts from IMD linkage within the English subset." else paste0("This is an additional reduction of ", sprintf("%.2f%%", registration_coverage$english_imd_excluded_pct), " of English-LSOA registrations, beyond the residence exclusions.")`
+The LSOA extract also includes `r scales::comma(registration_coverage$welsh_patients)` registered patients in `r scales::comma(registration_coverage$welsh_lsoa_count)` Welsh LSOAs. Another `r scales::comma(registration_coverage$other_patients)` registrations have an unknown or other residence code and are also excluded, leaving `r scales::comma(registration_coverage$english_patients)` registrations in the English LSOAs dataset used for national, sex, regional and ICB comparisons. Welsh LSOAs have no English IMD. English registrations without a valid IMD decile exclude another `r scales::comma(registration_coverage$english_patients_without_imd)` patients from the IMD comparison.
 
-Consequently, the deprivation analyses contain **`r scales::comma(registration_coverage$imd_patients)` registered patients**: `r coverage_difference_text(registration_coverage$imd_patients, registration_coverage$lsoa_total, "unfiltered LSOA-level")`, and `r coverage_difference_text(registration_coverage$imd_patients, registration_coverage$practice_total, "practice-level")`. The reduction from the unfiltered LSOA total is the sum of Welsh-residence exclusions, other/unassigned-residence exclusions and the additional English IMD-linkage exclusions. The comparison with the practice total also includes the initial practice-versus-LSOA source difference. These are differences in aggregate registration counts, not evidence identifying individual ghost patients.
-
-## Checking residence codes and IMD linkage
-
-The other/unassigned-residence count is calculated from the registration source before joining IMD. Changing the IMD edition cannot assign a deprivation decile to a registration with no usable residence LSOA. Welsh residence, other/unassigned residence and English LSOAs failing IMD linkage are separate exclusions. The tables below show both the reasons and the actual unmatched codes so these counts can be checked without combining them.
-
-```{r registration-imd-source-date, results='asis'}
-imd_source_dates <- sort(unique(as.Date(imd_lookup$IMD_Source_Date)))
-imd_source_date_text <- if (length(imd_source_dates) == 0L || anyNA(imd_source_dates)) {
-  "unavailable"
-} else {
-  paste(format(imd_source_dates, "%d %B %Y"), collapse = ", ")
-}
-cat(paste0("The IMD lookup uses the latest warehouse snapshot: **",
-           imd_source_date_text, "**. This date alone does not identify the IMD edition or LSOA geography.\n"))
-```
-
-[IMD 2019 uses 2011 LSOAs; IMD 2025 uses 2021 LSOAs](https://assets.publishing.service.gov.uk/media/68ff59c80f801e57b5bef907/ID_2025_Technical_Report.pdf). The July 2024 registration source uses 2021 LSOAs. If retaining the deprivation measure available in 2024, use IMD 2019 with a documented 2021-to-2011 geography mapping; [ONS has used such a mapping to assign 2019 deprivation classifications to Census 2021 LSOAs](https://www.ons.gov.uk/peoplepopulationandcommunity/healthandsocialcare/healthandwellbeing/articles/generalhealthbyagesexanddeprivationenglandandwales/census2021). A crosswalk changes the geography, not the IMD edition. Splits or mergers need a documented allocation and must not duplicate registration counts or average decile labels.
-
-Alternatively, a retrospective analysis can join 2024 registrations directly to IMD 2025 on matching 2021 LSOA codes, but must label the result as **2024 registrations classified by IMD 2025**, rather than deprivation measured in 2024. The two index editions are not interchangeable. This report does not automatically convert between them or fill missing residence with guessed deciles. Remaining valid English codes absent from the lookup should be investigated for geography, formatting or source-coverage problems.
-
-```{r registration-imd-linkage-summary, results='asis'}
-registration_coverage$linkage_audit %>%
-  group_by(Linkage_Status) %>%
-  summarise(
-    `Residence-code rows` = n(),
-    `Registered patients` = sum(Registered),
-    .groups = "drop"
-  ) %>%
-  mutate(`Registered patients` = scales::comma(`Registered patients`)) %>%
-  rename(`Linkage status` = Linkage_Status) %>%
-  report_table(caption = "Residence exclusions and English IMD linkage status")
-```
-
-```{r registration-imd-unmatched-codes, results='asis'}
-registration_coverage$linkage_audit %>%
-  filter(!Linkage_Status %in% c(
-    "English LSOA: valid IMD decile",
-    "Welsh residence: separate deprivation index"
-  )) %>%
-  arrange(desc(Registered), LSOA_Code) %>%
-  transmute(
-    `LSOA/residence code` = if_else(is.na(LSOA_Code), "<missing>", LSOA_Code),
-    `Registered patients` = scales::comma(Registered),
-    `Reason excluded` = Linkage_Status,
-    `Lookup IMD decile` = if_else(is.na(IMD_Decile), "Unavailable", as.character(IMD_Decile))
-  ) %>%
-  report_table(caption = "Other/unassigned residence and English codes without valid IMD")
-```
-
-# Scope and interpretation
-
-This report compares GP registered-patient counts with ONS population estimates for England from July 2015 onwards. ONS estimates are restricted to England. National and age/sex registered-patient series are practice-based and therefore include all patients registered with English GP practices. LSOA-derived analyses explicitly restrict registered patients to English residence LSOAs before IMD, NHS region and ICB aggregation. Percentage difference is defined as:
-
-\[
-100 \times \frac{\text{registered patients} - \text{ONS population}}{\text{ONS population}}
-\]
-
-Positive values mean registered-patient counts exceed ONS estimates. Snapshot analyses use `r format(snapshot_date, "%B %Y")`.
-
-In the HTML report, select **View table** to expand a table beneath the charts. Tables remain visible in the Word report.
+All charts state their data source. [The LSOA release contains sex counts but no ages](https://digital.nhs.uk/data-and-information/publications/statistical/patients-registered-at-a-gp-practice/metadata), so age and age-and-sex charts and tables retain practice-level registrations, including all residence codes. Their ONS comparison is England only. All other registration comparisons use English-resident LSOA data. FTE and payment inputs remain practice-level records. Aggregate registration differences do not identify individual ghost patients.
 
 # National population over time
 
 ```{r national-population-time-series}
+label_chart(
 ggplot(
   national_time_series,
   aes(x = Period, y = Population, colour = Source)
@@ -569,14 +520,15 @@ ggplot(
     legend.position = "top",
     panel.grid.minor = element_blank(),
     axis.text.x = element_text(angle = 45, hjust = 1)
-  )
+  ),
+  "LSOA-level registrations"
+)
 ```
 
 # Age over time
 
-Age bands contain completed ages 0–9, 10–19, and so on, with 90+ as the final band. Both sources use the same boundaries. The ONS curves include English residence LSOAs only; Welsh residents are excluded. Registered counts include patients of English GP practices, irrespective of residence.
-
 ```{r age-time-series, fig.height=10}
+label_chart(
 ggplot(
   age_time_series,
   aes(x = Period, y = Population, colour = Source, group = Source)
@@ -613,88 +565,15 @@ ggplot(
   theme(
     legend.position = "top",
     panel.grid.minor = element_blank()
-  )
-```
-
-## Checking the mid-2024 age totals
-
-The [published ONS mid-2024 workbook](https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/datasets/estimatesofthepopulationforenglandandwales/mid20242023localauthorityboundaries) gives **6,795,519** people aged 0–9 in England and Wales: **6,473,967 in England** and **321,552 in Wales**. The England figure is the relevant geographic comparator for this report. Including age ten would instead give 7,169,868 for England, so a 0–10 total must never be labelled or compared as 0–9.
-
-The expandable table compares the database's July 2024 snapshot with the published mid-2024 reference for every band. A database snapshot date does not by itself establish the ONS reference year or publication vintage. If the England totals differ after using the same age boundaries, check the warehouse's estimate year, revisions, completeness and duplicate records. Do not replace database values simply to force agreement with the benchmark. The national age/sex extracts are also checked against their own source totals so excluded age or sex records cannot disappear silently.
-
-```{r ons-mid2024-age-reference, results='asis'}
-ons_mid2024_reference <- readr::read_csv(
-  "data/ons_mid2024_age_band_reference.csv", show_col_types = FALSE
+  ),
+  "Practice-level registrations"
 )
-ons_database_2024 <- ons_demographic_time_series %>%
-  filter(Period == as.Date("2024-07-01")) %>%
-  group_by(Age_Band) %>%
-  summarise(Database_England = sum(ONS), .groups = "drop")
-
-if (nrow(ons_database_2024) > 0L) {
-  ons_mid2024_reference %>%
-    left_join(ons_database_2024, by = "Age_Band") %>%
-    transmute(
-      `Age band` = Age_Band,
-      `Database England, July 2024` = scales::comma(Database_England),
-      `Published England, mid-2024` = scales::comma(England),
-      `Published Wales, mid-2024` = scales::comma(Wales),
-      `Published England and Wales` = scales::comma(England_and_Wales),
-      `Database minus published England` = scales::comma(Database_England - England)
-    ) %>%
-    report_table(caption = "Database age totals versus the published ONS mid-2024 reference")
-} else {
-  cat("No July 2024 demographic snapshot is available in the selected database extract.\n")
-}
-```
-
-## Interpreting the apparent turn around 2021
-
-The change in the 0–9 and 20–29 curves needs to be considered alongside both demography and revisions to the population estimates. [ONS mid-2021 estimates introduced the Census 2021 population base](https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/bulletins/annualmidyearpopulationestimates/mid2021), and [ONS subsequently rebased the pre-2021 series](https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/bulletins/rebasingofmidyearpopulationestimatesfollowing/latest). Combining older pre-census estimates with newer post-census estimates can create a discontinuity. The database extract does not identify the publication vintage of each year's estimate, so a census-related break is a possibility to check, rather than a confirmed explanation for these particular curves.
-
-For **ages 20–29**, continued growth after 2021 is consistent with increased net international migration and changes in the cohorts entering and leaving the age band. [ONS identified migration as the main contributor to population growth in the year to mid-2023 and noted large increases among 20–29-year-olds in many rapidly growing local authorities](https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/bulletins/populationestimatesforenglandandwales/mid2023). This supports migration as a plausible contributor, but does not quantify how much of this report's national age-band change it explains.
-
-For **ages 0–9**, the population is a stock of ten birth cohorts, changed by births, children ageing out at ten, deaths and migration of children. A rise therefore does not necessarily mean that births have started increasing. [Births in England and Wales increased briefly in 2021](https://www.ons.gov.uk/peoplepopulationandcommunity/birthsdeathsandmarriages/livebirths/bulletins/birthsummarytablesenglandandwales/2021), then [fell in 2022](https://www.ons.gov.uk/peoplepopulationandcommunity/birthsdeathsandmarriages/livebirths/bulletins/birthsummarytablesenglandandwales/2022) and [2023](https://www.ons.gov.uk/peoplepopulationandcommunity/birthsdeathsandmarriages/livebirths/bulletins/birthsummarytablesenglandandwales/2023). ONS rebasing also reduced, rather than universally increased, estimates for children in England. The apparent upturn should therefore be checked against a consistently revised ONS series and child migration/cohort flows before it is attributed to a sustained change in births.
-
-The expandable audit below reports the actual July estimates and changes for the two age bands, together with the number of English LSOAs represented in each source snapshot. Changes in LSOA counts can reflect new boundaries or incomplete coverage; a boundary change alone should not change the national total if coverage is complete. Annual changes are shown only where consecutive years are present. These checks identify the timing of the observed change; they do not establish its cause.
-
-```{r ons-age-trend-audit, results='asis'}
-ons_age_trend_audit <- age_time_series %>%
-  filter(
-    Source == "ONS population estimate",
-    Age_Band %in% c("0-9", "20-29"),
-    format(Period, "%m") == "07",
-    !is.na(Population)
-  ) %>%
-  mutate(Year = as.integer(format(Period, "%Y"))) %>%
-  arrange(Age_Band, Period) %>%
-  group_by(Age_Band) %>%
-  mutate(
-    Previous_Population = lag(Population),
-    Consecutive_Year = Year == lag(Year) + 1L,
-    Annual_Change = if_else(Consecutive_Year, Population - Previous_Population, NA_real_),
-    Annual_Change_Pct = if_else(
-      Consecutive_Year & Previous_Population > 0,
-      100 * Annual_Change / Previous_Population, NA_real_
-    )
-  ) %>%
-  ungroup() %>%
-  left_join(national_ons %>% select(Period, LSOA_Count), by = "Period") %>%
-  filter(Year >= 2018) %>%
-  transmute(
-    Year, `Age band` = Age_Band,
-    `ONS population` = scales::comma(Population),
-    `Annual change, n` = if_else(is.na(Annual_Change), "Not available", scales::comma(Annual_Change)),
-    `Annual change, %` = if_else(is.na(Annual_Change_Pct), "Not available",
-                                 sprintf("%.2f%%", Annual_Change_Pct)),
-    `English LSOAs in source, n` = scales::comma(LSOA_Count)
-  )
-report_table(ons_age_trend_audit, caption = "ONS age-band estimates and source coverage around 2021")
 ```
 
 # Sex over time
 
 ```{r sex-time-series, fig.height=7}
+label_chart(
 ggplot(
   sex_time_series,
   aes(x = Period, y = Population, colour = Source, group = Source)
@@ -726,20 +605,25 @@ ggplot(
   theme(
     legend.position = "top",
     panel.grid.minor = element_blank()
-  )
+  ),
+  "LSOA-level registrations"
+)
 ```
 
-# July 2024 national snapshots
+# July 2024 Snapshots
 
 ## National total
 
 ```{r national-snapshot-chart}
+label_chart(
 comparison_bar(
   national_snapshot,
   Geography,
   "National percentage difference",
   format(snapshot_date, "%B %Y"),
   fixed_fill = "#2166AC"
+),
+  "LSOA-level registrations"
 )
 ```
 
@@ -752,55 +636,21 @@ national_snapshot %>%
     `Raw difference` = scales::comma(Registered - ONS),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  report_table(caption = "National population comparison")
+  report_table(caption = "National population comparison (LSOA-level registrations)")
 ```
-
-## GP practice totals compared with GP LSOA totals
-
-This compares both registered-patient sources at the same snapshot date. The GP LSOA total includes all residence codes, including Wales and unassigned/other records, before any ONS join or England-only filter. A positive difference means the practice-based total is larger. The difference alone does not identify ghost patients.
-
-```{r practice-versus-lsoa-table, results='asis'}
-practice_total_snapshot <- national_registered %>%
-  filter(Period == snapshot_date)
-
-if (nrow(practice_total_snapshot) != 1L ||
-    nrow(lsoa_registered_july %>% filter(Period == snapshot_date)) == 0L) {
-  stop("Both GP sources must have data for the requested snapshot date.")
-}
-
-practice_lsoa_comparison <- practice_total_snapshot %>%
-  transmute(
-    Period,
-    Practice_Total = Population,
-    LSOA_Total = lsoa_registered_snapshot_total,
-    Difference = Practice_Total - LSOA_Total,
-    Pct_Difference = if_else(
-      Practice_Total > 0, 100 * Difference / Practice_Total, NA_real_
-    )
-  )
-
-practice_lsoa_comparison %>%
-  transmute(
-    Snapshot = format(Period, "%d %b %Y"),
-    `GP practice total` = scales::comma(Practice_Total),
-    `GP LSOA total (all records)` = scales::comma(LSOA_Total),
-    `Practice minus LSOA` = scales::comma(Difference),
-    `Difference (% of practice total)` = sprintf("%.2f%%", Pct_Difference)
-  ) %>%
-  report_table(caption = "Overall difference between GP practice and GP LSOA list totals")
-```
-
-Of the GP LSOA total, `r scales::comma(lsoa_registered_snapshot_total - registered_removed_non_england)` patients have an English LSOA, `r scales::comma(registered_removed_wales)` have a Welsh LSOA, and `r scales::comma(registered_removed_other)` have another or unassigned residence code. Later LSOA analyses use the English-LSOA subtotal.
 
 ## Age
 
 ```{r age-snapshot-chart, fig.height=6}
+label_chart(
 comparison_bar(
   age_snapshot,
   Age_Band,
   "Percentage difference by age",
   format(snapshot_date, "%B %Y"),
   "Age band"
+),
+  "Practice-level registrations"
 )
 ```
 
@@ -813,18 +663,21 @@ age_snapshot %>%
     `Raw difference` = scales::comma(Registered - ONS),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  report_table(caption = "Population comparison by age")
+  report_table(caption = "Population comparison by age (Practice-level registrations)")
 ```
 
 ## Sex
 
 ```{r sex-snapshot-chart}
+label_chart(
 comparison_bar(
   sex_snapshot,
   Sex,
   "Percentage difference by sex",
   format(snapshot_date, "%B %Y"),
   "Sex"
+),
+  "LSOA-level registrations"
 )
 ```
 
@@ -837,12 +690,13 @@ sex_snapshot %>%
     `Raw difference` = scales::comma(Registered - ONS),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  report_table(caption = "Population comparison by sex")
+  report_table(caption = "Population comparison by sex (LSOA-level registrations)")
 ```
 
 ## Age and sex
 
 ```{r age-sex-snapshot-chart, fig.height=7}
+label_chart(
 ggplot(
   age_sex_snapshot,
   aes(x = Age_Band, y = Pct_Difference, fill = Sex)
@@ -850,6 +704,7 @@ ggplot(
   geom_hline(yintercept = 0, colour = "grey55") +
   geom_col(position = position_dodge(width = 0.8), width = 0.7) +
   geom_text(
+    colour = "grey20",
     aes(
       label = sprintf("%.1f%%", Pct_Difference),
       group = Sex,
@@ -876,7 +731,9 @@ ggplot(
     legend.position = "top",
     panel.grid.minor = element_blank(),
     axis.text.x = element_text(angle = 45, hjust = 1)
-  )
+  ),
+  "Practice-level registrations"
+)
 ```
 
 ```{r age-sex-snapshot-table, results='asis'}
@@ -890,23 +747,25 @@ age_sex_snapshot %>%
     `Raw difference` = scales::comma(Registered - ONS),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  report_table(caption = "Population comparison by age and sex")
+  report_table(caption = "Population comparison by age and sex (Practice-level registrations)")
 ```
 
 # IMD deciles using LSOA data
 
-
 ```{r imd-snapshot-chart, fig.height=6}
+label_chart(
 comparison_bar(
   imd_snapshot,
   IMD_Label,
   "Percentage difference by LSOA-level IMD decile",
   format(snapshot_date, "%B %Y"),
   "IMD decile"
+),
+  "LSOA-level registrations"
 )
 ```
 
-**England-resident LSOA scope:** all LSOA-derived analyses from this point use only English `E01...` LSOAs. At the `r format(snapshot_date, "%B %Y")` snapshot, this excludes **`r scales::comma(registered_removed_non_england)` registered patients** living in non-English LSOAs: **`r scales::comma(registered_removed_wales)` in Wales** and **`r scales::comma(registered_removed_other)` in other non-English LSOAs** (`r sprintf("%.2f%%", registered_removed_non_england_pct)` of registered patients in the LSOA dataset).
+This excludes: `r scales::comma(registered_removed_wales)` in Wales and `r scales::comma(registered_removed_other)` in “other LSOAs”. It also excludes `r scales::comma(registration_coverage$english_patients_without_imd)` English registrations without a valid IMD decile.
 
 ```{r imd-snapshot-table, results='asis'}
 imd_snapshot %>%
@@ -918,7 +777,7 @@ imd_snapshot %>%
     `Raw difference` = scales::comma(Raw_Difference),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  report_table(caption = "Population comparison by IMD decile")
+  report_table(caption = "Population comparison by IMD decile (LSOA-level registrations)")
 ```
 
 # NHS England regions
@@ -927,12 +786,15 @@ imd_snapshot %>%
 region_snapshot_plot <- region_snapshot %>%
   mutate(NHSER26NM = reorder(NHSER26NM, Pct_Difference))
 
+label_chart(
 comparison_bar(
   region_snapshot_plot,
   NHSER26NM,
   "Percentage difference by NHS England region",
   format(snapshot_date, "%B %Y"),
   "NHS England region"
+),
+  "LSOA-level registrations"
 )
 ```
 
@@ -946,23 +808,26 @@ region_snapshot %>%
     `Raw difference` = scales::comma(Raw_Difference),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  report_table(caption = "Population comparison by NHS England region")
+  report_table(caption = "Population comparison by NHS England region (LSOA-level registrations)")
 ```
 
-# NHS integrated care boards
+# Integrated Care Boards
 
-All ICB comparisons use the April 2026 structure. The population snapshot remains July 2024. LSOA populations are reassigned through the official ONS April 2026 lookup, including the Frimley boundary changes. Practice counts, workforce and payments use the same 2026 ICB codes.
+All ICB comparisons use the new April 2026 structure while using the July 2024 data. LSOA populations are reassigned through the official ONS April 2026 lookup, including the Frimley boundary changes.
 
 ```{r icb-snapshot-chart, fig.height=12}
 icb_snapshot_plot <- icb_snapshot %>%
   mutate(ICB26NM = reorder(ICB26NM, Pct_Difference))
 
+label_chart(
 comparison_bar(
   icb_snapshot_plot,
   ICB26NM,
   "Percentage difference by NHS integrated care board",
   format(snapshot_date, "%B %Y"),
   "Integrated care board"
+),
+  "LSOA-level registrations"
 )
 ```
 
@@ -976,9 +841,8 @@ icb_snapshot %>%
     `Raw difference` = scales::comma(Raw_Difference),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  report_table(caption = "Population comparison by NHS integrated care board")
+  report_table(caption = "Population comparison by NHS integrated care board (LSOA-level registrations)")
 ```
-
 
 # Patients per qualified GP FTE
 
@@ -1009,10 +873,8 @@ workforce_region_snapshot <- workforce_snapshot %>%
   group_by(NHS_Region) %>%
   summarise(GP_FTE = sum(GP_FTE, na.rm = TRUE), .groups = "drop")
 
-practice_region_registered <- practice_registered_snapshot %>%
-  inner_join(practice_region_lookup, by = "Practice_Code") %>%
-  group_by(NHS_Region) %>%
-  summarise(Registered = sum(Registered, na.rm = TRUE), .groups = "drop")
+lsoa_region_registered <- region_snapshot %>%
+  transmute(NHS_Region = normalise_region_name(NHSER26NM), Registered)
 
 patients_per_gp_region_snapshot <- region_snapshot %>%
   transmute(
@@ -1020,7 +882,7 @@ patients_per_gp_region_snapshot <- region_snapshot %>%
     NHS_Region_Display = NHSER26NM,
     ONS
   ) %>%
-  full_join(practice_region_registered, by = "NHS_Region") %>%
+  full_join(lsoa_region_registered, by = "NHS_Region") %>%
   inner_join(workforce_region_snapshot, by = "NHS_Region") %>%
   filter(GP_FTE > 0) %>%
   mutate(
@@ -1035,10 +897,8 @@ workforce_icb_snapshot <- workforce_snapshot %>%
   group_by(ICB_Key, ICB) %>%
   summarise(GP_FTE = sum(GP_FTE, na.rm = TRUE), .groups = "drop")
 
-practice_icb_registered <- practice_registered_snapshot %>%
-  inner_join(practice_icb_lookup, by = "Practice_Code") %>%
-  group_by(ICB_Key, ICB) %>%
-  summarise(Registered = sum(Registered, na.rm = TRUE), .groups = "drop")
+lsoa_icb_registered <- icb_snapshot %>%
+  transmute(ICB_Key = ICB26CD, ICB = ICB26NM, Registered)
 
 icb_population_snapshot <- icb_snapshot %>%
   transmute(
@@ -1049,7 +909,7 @@ icb_population_snapshot <- icb_snapshot %>%
 
 patients_per_gp_icb_snapshot <- icb_population_snapshot %>%
   full_join(
-    practice_icb_registered %>% rename(ICB_Registered_Name = ICB),
+    lsoa_icb_registered %>% rename(ICB_Registered_Name = ICB),
     by = "ICB_Key"
   ) %>%
   inner_join(
@@ -1125,6 +985,8 @@ patients_per_gp_icb_long <- patients_per_gp_icb_long %>%
   mutate(ICB = factor(ICB, levels = icb_gp_order))
 ```
 
+Registered and ONS populations both follow English residence LSOAs. Qualified GP FTE follows practice assignment to the April 2026 geography; these are population-to-workforce comparisons and do not measure each practice’s actual registered workload.
+
 ## July 2024 national comparison
 
 ```{r patients-per-gp-july-2024-bar, fig.width=8, fig.height=5}
@@ -1148,12 +1010,14 @@ if (nrow(patients_per_gp_july_2024) != 2L ||
 patients_per_gp_july_2024 <- patients_per_gp_july_2024 %>%
   mutate(Source = factor(Source, levels = expected_population_sources))
 
+label_chart(
 ggplot(
   patients_per_gp_july_2024,
   aes(x = Source, y = Patients_Per_GP_FTE, fill = Source)
 ) +
   geom_col(width = 0.6) +
   geom_text(
+    colour = "grey20",
     aes(label = scales::comma(Patients_Per_GP_FTE, accuracy = 1)),
     vjust = -0.5,
     size = 4
@@ -1187,12 +1051,16 @@ ggplot(
     legend.position = "none",
     panel.grid.major.x = element_blank(),
     panel.grid.minor = element_blank()
-  )
+  ),
+  "LSOA-level registrations",
+  "GP FTE: practice-level workforce data; aggregated to the chart geography."
+)
 ```
 
 ## July time series
 
 ```{r patients-per-gp-july-time-series}
+label_chart(
 ggplot(
   patients_per_gp_july,
   aes(x = Period, y = Patients_Per_GP_FTE, colour = Source)
@@ -1220,7 +1088,22 @@ ggplot(
   theme(
     legend.position = "top",
     panel.grid.minor = element_blank()
-  )
+  ),
+  "LSOA-level registrations",
+  "GP FTE: practice-level workforce data; aggregated to the chart geography."
+)
+```
+
+```{r patients-per-gp-national-table, results='asis'}
+patients_per_gp_national_snapshot %>%
+  transmute(
+    Geography,
+    `Registered patients per GP FTE` =
+      scales::comma(Registered_Per_GP_FTE, accuracy = 1),
+    `ONS population per GP FTE` =
+      scales::comma(ONS_Per_GP_FTE, accuracy = 1)
+  ) %>%
+  report_table(caption = "National patients per GP FTE comparison (LSOA registrations; practice-level workforce)")
 ```
 
 ## NHS England regions
@@ -1231,6 +1114,7 @@ gp_region_dumbbell <- patients_per_gp_region_snapshot %>%
     NHS_Region = reorder(NHS_Region, Registered_Per_GP_FTE)
   )
 
+label_chart(
 ggplot(
   gp_region_dumbbell,
   aes(y = NHS_Region)
@@ -1253,6 +1137,7 @@ ggplot(
     size = 3
   ) +
   geom_text(
+    colour = "grey20",
     aes(
       x = Registered_Per_GP_FTE,
       label = scales::comma(Registered_Per_GP_FTE, accuracy = 1)
@@ -1262,6 +1147,7 @@ ggplot(
     size = 3.4
   ) +
   geom_text(
+    colour = "grey20",
     aes(
       x = ONS_Per_GP_FTE,
       label = scales::comma(ONS_Per_GP_FTE, accuracy = 1)
@@ -1291,58 +1177,23 @@ ggplot(
     legend.position = "top",
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank()
-  )
+  ),
+  "LSOA-level registrations",
+  "GP FTE: practice-level workforce data; aggregated to the chart geography."
+)
 ```
 
-```{r patients-per-gp-region-percentage-difference, fig.height=6}
-gp_region_pct_plot <- patients_per_gp_region_snapshot %>%
-  mutate(
-    NHS_Region = reorder(NHS_Region, Pct_Difference_Per_GP_FTE),
-    Direction = if_else(
-      Pct_Difference_Per_GP_FTE >= 0,
-      "Registered basis higher",
-      "Registered basis lower"
-    )
-  )
-
-ggplot(
-  gp_region_pct_plot,
-  aes(
-    x = Pct_Difference_Per_GP_FTE,
-    y = NHS_Region,
-    fill = Direction
-  )
-) +
-  geom_vline(xintercept = 0, colour = "grey55") +
-  geom_col(width = 0.7) +
-  geom_text(
-    aes(
-      label = sprintf("%.1f%%", Pct_Difference_Per_GP_FTE),
-      hjust = if_else(Pct_Difference_Per_GP_FTE >= 0, -0.12, 1.12)
-    ),
-    size = 3.6
-  ) +
-  scale_x_continuous(
-    labels = function(x) paste0(x, "%"),
-    expand = expansion(mult = c(0.12, 0.15))  ) +
-  scale_fill_manual(values = c(
-    "Registered basis higher" = "#2166AC",
-    "Registered basis lower" = "#B2182B"
-  ), guide = "none") +
-  labs(
-    title = "Percentage difference in patients per qualified GP FTE by NHS England region",
-    subtitle = paste0(
-      "Registered-patient basis compared with ONS population, ",
-      format(snapshot_date, "%B %Y")
-    ),
-    x = "Percentage difference vs ONS basis",
-    y = NULL
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    panel.grid.major.y = element_blank(),
-    panel.grid.minor = element_blank()
-  )
+```{r patients-per-gp-region-table, results='asis'}
+patients_per_gp_region_snapshot %>%
+  arrange(desc(Registered_Per_GP_FTE)) %>%
+  transmute(
+    `NHS England region` = NHS_Region,
+    `Registered patients per GP FTE` =
+      scales::comma(Registered_Per_GP_FTE, accuracy = 1),
+    `ONS population per GP FTE` =
+      scales::comma(ONS_Per_GP_FTE, accuracy = 1)
+  ) %>%
+  report_table(caption = "Regional patients per GP FTE comparison (LSOA registrations; practice-level workforce)")
 ```
 
 ## Integrated care boards
@@ -1353,6 +1204,7 @@ gp_icb_dumbbell <- patients_per_gp_icb_snapshot %>%
     ICB = reorder(ICB, Registered_Per_GP_FTE)
   )
 
+label_chart(
 ggplot(
   gp_icb_dumbbell,
   aes(y = ICB)
@@ -1375,6 +1227,7 @@ ggplot(
     size = 2.5
   ) +
   geom_text(
+    colour = "grey20",
     aes(
       x = Registered_Per_GP_FTE,
       label = scales::comma(Registered_Per_GP_FTE, accuracy = 1)
@@ -1384,6 +1237,7 @@ ggplot(
     size = 2.8
   ) +
   geom_text(
+    colour = "grey20",
     aes(
       x = ONS_Per_GP_FTE,
       label = scales::comma(ONS_Per_GP_FTE, accuracy = 1)
@@ -1413,31 +1267,13 @@ ggplot(
     legend.position = "top",
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank()
-  )
+  ),
+  "LSOA-level registrations",
+  "GP FTE: practice-level workforce data; aggregated to the chart geography."
+)
 ```
 
-```{r patients-per-gp-table, results='asis'}
-patients_per_gp_national_snapshot %>%
-  transmute(
-    Geography,
-    `Registered patients per GP FTE` =
-      scales::comma(Registered_Per_GP_FTE, accuracy = 1),
-    `ONS population per GP FTE` =
-      scales::comma(ONS_Per_GP_FTE, accuracy = 1)
-  ) %>%
-  report_table(caption = "National patients per GP FTE comparison")
-
-patients_per_gp_region_snapshot %>%
-  arrange(desc(Registered_Per_GP_FTE)) %>%
-  transmute(
-    `NHS England region` = NHS_Region,
-    `Registered patients per GP FTE` =
-      scales::comma(Registered_Per_GP_FTE, accuracy = 1),
-    `ONS population per GP FTE` =
-      scales::comma(ONS_Per_GP_FTE, accuracy = 1)
-  ) %>%
-  report_table(caption = "Regional patients per GP FTE comparison")
-
+```{r patients-per-gp-icb-table, results='asis'}
 patients_per_gp_icb_snapshot %>%
   arrange(desc(Registered_Per_GP_FTE)) %>%
   transmute(
@@ -1447,36 +1283,8 @@ patients_per_gp_icb_snapshot %>%
     `ONS population per GP FTE` =
       scales::comma(ONS_Per_GP_FTE, accuracy = 1)
   ) %>%
-  report_table(caption = "ICB patients per GP FTE comparison")
+  report_table(caption = "ICB patients per GP FTE comparison (LSOA registrations; practice-level workforce)")
 ```
-
-# Potential overall payment reduction
-
-## Method
-
-This section models the money removed from payments if registered lists were reduced towards the ONS population and each removed registration carried its payment with it. For each geography, the annual payment per registered patient is calculated from its observed total payments and its registered-patient count:
-
-\[
-\text{Payment per registered patient} = \frac{\text{Current payments}}{\text{Registered patients}}
-\]
-
-\[
-\text{Registrations removed} = \max(\text{Registered patients} - \text{ONS residents},\ 0)
-\]
-
-\[
-\text{Potential loss} = \text{Registrations removed} \times \text{Payment per registered patient}
-\]
-
-\[
-\text{Remaining payments} = \text{Current payments} - \text{Potential loss}
-\]
-
-For example, a payment rate of **£165 per registered patient** and a modelled reduction of **1,000 registrations** produces a **£165,000 loss**, subtracted from the current total. The report uses the actual calculated rate for each geography, rather than fixing every rate at £165. Where the ONS population equals or exceeds registrations, this loss-only scenario removes no registrations and shows no payment reduction.
-
-The scenario assumes that all payments fall proportionately with the unweighted registered list. Actual payments include categories such as premises, QOF and incentive schemes, so [this is an illustrative funding scenario rather than a prediction of contractual losses](https://digital.nhs.uk/data-and-information/publications/statistical/nhs-payments-to-general-practice/england-2024-25). It also assumes that the entire positive registration-versus-ONS difference could be removed; the difference does not identify individual ghost patients. Practice counts follow practice location while ONS counts follow residence, so cross-boundary registration can contribute to the difference.
-
-National and local estimates use their own observed payment rates and population differences. Regional or ICB losses therefore need not sum to the independently calculated national loss, especially where positive and negative population differences offset. Local figures include records assigned to the relevant geography; unassigned payment and registration amounts are disclosed below. All population counts retain the selected 2024 snapshot, with ICB results grouped on April 2026 geography.
 
 ```{r payment-scenario-prepare, include=FALSE, results='asis'}
 source("13_Model_Payment_Reduction.R")
@@ -1515,7 +1323,7 @@ regional_payment_scenario <- payment_by_practice %>%
   inner_join(practice_region_lookup, by = "Practice_Code") %>%
   group_by(NHS_Region) %>%
   summarise(Total_Payments = sum(Total_Payments), .groups = "drop") %>%
-  left_join(practice_region_registered, by = "NHS_Region") %>%
+  left_join(lsoa_region_registered, by = "NHS_Region") %>%
   left_join(
     region_snapshot %>%
       transmute(NHS_Region = normalise_region_name(NHSER26NM), ONS),
@@ -1529,7 +1337,7 @@ icb_payment_scenario <- payment_by_practice %>%
   summarise(Total_Payments = sum(Total_Payments), .groups = "drop") %>%
   rename(ICB_Payment_Name = ICB) %>%
   left_join(
-    practice_icb_registered %>% rename(ICB_Registered_Name = ICB),
+    lsoa_icb_registered %>% rename(ICB_Registered_Name = ICB),
     by = "ICB_Key"
   ) %>%
   left_join(icb_population_snapshot, by = "ICB_Key") %>%
@@ -1543,11 +1351,11 @@ payment_unassigned_icb <- payment_by_practice %>%
   anti_join(practice_icb_lookup, by = "Practice_Code") %>%
   summarise(Amount = sum(Total_Payments)) %>% pull(Amount)
 registered_unassigned_region <- national_snapshot$Registered -
-  sum(practice_region_registered$Registered)
+  sum(lsoa_region_registered$Registered)
 registered_unassigned_icb <- national_snapshot$Registered -
-  sum(practice_icb_registered$Registered)
+  sum(lsoa_icb_registered$Registered)
 if (registered_unassigned_region < -0.5 || registered_unassigned_icb < -0.5) {
-  stop("Geographic registration totals exceed the national practice total.")
+  stop("Geographic registration totals exceed the national English LSOA total.")
 }
 
 payment_currency <- function(x, accuracy = 1) {
@@ -1560,6 +1368,7 @@ payment_loss_chart <- function(data, geography, title) {
   )) +
     geom_col(fill = "#2166AC", width = 0.65) +
     geom_text(
+    colour = "grey20",
       aes(label = paste0(
         gbp_symbol, scales::number(Potential_Reduction / 1e6, accuracy = 0.1),
         "m (", sprintf("%.1f%%", Reduction_Pct), ")"
@@ -1591,61 +1400,9 @@ payment_loss_table <- function(data, geography, caption) {
       `Loss (£)` = scales::comma(Potential_Reduction, accuracy = 1),
       `Remaining (£)` = scales::comma(Remaining_Payments, accuracy = 1)
     ) %>%
-    report_table(caption = caption)
+    report_table(caption = paste(caption, "(LSOA registrations; practice-level payments)"))
 }
 ```
-
-The payment measure is **Total NHS Payments to General Practice Minus Deductions**, using the latest available payment snapshot (`r format(payment_snapshot_date, "%d %B %Y")`). Population counts refer to `r format(snapshot_date, "%B %Y")`; the payment period and population snapshot are therefore not identical. Payment totals relate to the annual payment records, not one month's expenditure.
-
-Amounts without a region assignment are `r payment_currency(payment_unassigned_region)`, alongside `r scales::comma(registered_unassigned_region)` registrations without a region assignment. Amounts without an ICB assignment are `r payment_currency(payment_unassigned_icb)`, alongside `r scales::comma(registered_unassigned_icb)` registrations without an ICB assignment. These national records are outside the corresponding local estimates.
-
-## National loss
-
-At the national calculated rate of **`r payment_currency(national_payment_scenario$Payment_Per_Registered, accuracy = 0.01)` per registered patient**, a modelled removal of **`r scales::comma(national_payment_scenario$Registrations_Removed)` registrations** produces a potential loss of **`r payment_currency(national_payment_scenario$Potential_Reduction)`** (`r sprintf("%.1f%%", national_payment_scenario$Reduction_Pct)` of current payments). This is subtracted from **`r payment_currency(national_payment_scenario$Total_Payments)`**, leaving **`r payment_currency(national_payment_scenario$Remaining_Payments)`**.
-
-```{r national-payment-loss-chart, fig.height=3.5}
-payment_loss_chart(national_payment_scenario, "Geography", "Potential national payment loss")
-```
-
-```{r national-payment-loss-table, results='asis'}
-payment_loss_table(national_payment_scenario, "Geography", "National payment loss scenario")
-```
-
-## Loss by NHS England region
-
-```{r regional-payment-loss-chart, fig.height=7}
-payment_loss_chart(regional_payment_scenario, "NHS_Region",
-                   "Potential payment loss by NHS England region")
-```
-
-```{r regional-payment-loss-table, results='asis'}
-payment_loss_table(regional_payment_scenario, "NHS_Region", "Regional payment loss scenarios")
-```
-
-## Loss by integrated care board
-
-```{r icb-payment-loss-chart, fig.height=13}
-payment_loss_chart(icb_payment_scenario, "ICB",
-                   "Potential payment loss by ICB (April 2026 geography)")
-```
-
-```{r icb-payment-loss-table, results='asis'}
-payment_loss_table(icb_payment_scenario, "ICB", "ICB payment loss scenarios")
-```
-
-# Average payment with total payments held constant
-
-This comparison keeps the **full observed annual payment total unchanged** for each geography and changes only the population denominator:
-
-\[
-\text{Registered-population average} = \frac{\text{Current total payments}}{\text{Registered patients}}
-\qquad
-\text{ONS-population average} = \frac{\text{Current total payments}}{\text{ONS residents}}
-\]
-
-For example, £1,650,000 divided by 10,000 registrations is **£165.00 per registered patient**. Keeping that same £1,650,000 and dividing by 9,000 ONS residents gives **£183.33 per resident**, an increase of **11.11%** in the average. Where ONS residents exceed registrations, the average falls. This comparison uses the full payment total, with no deduction from it; the preceding loss scenario instead removes money with each removed registration.
-
-The charts use the same practice-based registration totals, payment metric and source dates as the loss charts. ONS denominators are England-resident population estimates. Regional and ICB registrations and payments follow practice assignment, while ONS populations follow residence; cross-boundary registration can therefore affect the comparison. ICBs use April 2026 geography. Each average is calculated from the geography's total payments divided by its total population, rather than an unweighted mean of practice averages. A change in the average does not represent extra income or a payment loss.
 
 ```{r fixed-total-payment-prepare, include=FALSE}
 national_fixed_payment_rates <- model_fixed_total_payment_rates(national_payment_scenario)
@@ -1667,15 +1424,15 @@ fixed_payment_rate_chart <- function(data, geography, title) {
     geom_point(aes(x = Payment_Per_Registered, colour = "Registered population"), size = 3) +
     geom_point(aes(x = Payment_Per_ONS, colour = "ONS population"), size = 3, na.rm = TRUE) +
     geom_text(
+    colour = "grey20",
       aes(x = Payment_Per_Registered,
-          label = payment_currency(Payment_Per_Registered, accuracy = 0.01),
-          colour = "Registered population"),
+          label = payment_currency(Payment_Per_Registered, accuracy = 0.01)),
       nudge_y = 0.22, size = 3, show.legend = FALSE
     ) +
     geom_text(
+    colour = "grey20",
       aes(x = Payment_Per_ONS,
-          label = payment_currency(Payment_Per_ONS, accuracy = 0.01),
-          colour = "ONS population"),
+          label = payment_currency(Payment_Per_ONS, accuracy = 0.01)),
       nudge_y = -0.22, size = 3, na.rm = TRUE, show.legend = FALSE
     ) +
     scale_colour_manual(values = c(
@@ -1712,13 +1469,18 @@ fixed_payment_rate_table <- function(data, geography, caption) {
       `Change (%)` = if_else(is.na(Rate_Change_Pct), "Not defined",
                              sprintf("%.2f%%", Rate_Change_Pct))
     ) %>%
-    report_table(caption = caption)
+    report_table(caption = paste(caption, "(LSOA registrations; practice-level payments)"))
 }
 ```
 
-## National average payment
+# If payment to general practice were to remain constant despite reduction in list size
+
+This comparison keeps overall payments the same but changes the population denominator.
+
+For each geography, the full annual payment total is divided separately by the English LSOA registered count and the ONS population. Payments use **Total NHS Payments to General Practice Minus Deductions**, with the latest available payment snapshot (`r format(payment_snapshot_date, "%d %B %Y")`); populations refer to `r format(snapshot_date, "%B %Y")`. Payments follow practice assignment, while both population denominators follow residence. ICBs use April 2026 geography. Amounts without a region assignment are `r payment_currency(payment_unassigned_region)`; amounts without an ICB assignment are `r payment_currency(payment_unassigned_icb)` and are excluded from the respective local totals. A higher payment per resident is an average under a fixed budget, not extra income.
 
 ```{r national-fixed-total-payment-chart, fig.width=8, fig.height=5}
+label_chart(
 national_fixed_payment_rates %>%
   select(Payment_Per_Registered, Payment_Per_ONS) %>%
   pivot_longer(everything(), names_to = "Denominator", values_to = "Average_Payment") %>%
@@ -1729,6 +1491,7 @@ national_fixed_payment_rates %>%
   ggplot(aes(x = Denominator, y = Average_Payment, fill = Denominator)) +
   geom_col(width = 0.6, na.rm = TRUE) +
   geom_text(aes(label = payment_currency(Average_Payment, accuracy = 0.01)),
+            colour = "grey20",
             vjust = -0.5, size = 4, na.rm = TRUE) +
   scale_fill_manual(values = c(
     "Registered population" = "#2166AC", "ONS population" = "#B2182B"
@@ -1743,7 +1506,10 @@ national_fixed_payment_rates %>%
     caption = "The full national payment total is used in both bars."
   ) +
   theme_minimal(base_size = 12) +
-  theme(legend.position = "none", panel.grid.minor = element_blank())
+  theme(legend.position = "none", panel.grid.minor = element_blank()),
+  "LSOA-level registrations",
+  "Payments: practice-level annual payment data; aggregated to the chart geography."
+)
 ```
 
 ```{r national-fixed-total-payment-table, results='asis'}
@@ -1754,8 +1520,12 @@ fixed_payment_rate_table(national_fixed_payment_rates, "Geography",
 ## Average payment by NHS England region
 
 ```{r regional-fixed-total-payment-chart, fig.height=7}
+label_chart(
 fixed_payment_rate_chart(regional_fixed_payment_rates, "NHS_Region",
-                         "Regional average payments with total payments unchanged")
+                         "Regional average payments with total payments unchanged"),
+  "LSOA-level registrations",
+  "Payments: practice-level annual payment data; aggregated to the chart geography."
+)
 ```
 
 ```{r regional-fixed-total-payment-table, results='asis'}
@@ -1766,8 +1536,12 @@ fixed_payment_rate_table(regional_fixed_payment_rates, "NHS_Region",
 ## Average payment by integrated care board
 
 ```{r icb-fixed-total-payment-chart, fig.height=13}
+label_chart(
 fixed_payment_rate_chart(icb_fixed_payment_rates, "ICB",
-                         "ICB average payments with totals unchanged (April 2026 geography)")
+                         "ICB average payments with totals unchanged (April 2026 geography)"),
+  "LSOA-level registrations",
+  "Payments: practice-level annual payment data; aggregated to the chart geography."
+)
 ```
 
 ```{r icb-fixed-total-payment-table, results='asis'}
@@ -1775,14 +1549,50 @@ fixed_payment_rate_table(icb_fixed_payment_rates, "ICB",
                          "ICB average payments with each total held constant")
 ```
 
-## Data sources
+# If payments decreased alongside reduction in list size
 
-- GP registered-patient national, age, and sex data: Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1.
-- GP registered-patient LSOA data: Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1. The source pull includes all residence codes for patients registered with English GP practices; all LSOA-derived report analyses use an explicit English E01... subset, with excluded non-English registered patients reported below the first LSOA chart.
-- ONS population estimates: Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1, restricted to English LSOAs.
-- LSOA IMD: latest snapshot in Demography.Index_Of_Multiple_Deprivation_By_LSOA1.
-- GP workforce: NHS_Workforce.Practice_Level_Census_Data1, summing Measure_Value where Measure is TOTAL_GP_SEN_PTNR_FTE, TOTAL_GP_PTNR_PROV_FTE, TOTAL_GP_SAL_BY_PRAC_FTE, or TOTAL_GP_SAL_BY_OTH_FTE.
-- GP payments: NHS_Payments_To_GP_Practices.Figures1 via 03_Payments_To_GP_Practice.R.
-- LSOA-to-ICB lookup: [official ONS April 2026 LSOA21-to-SICBL26-to-ICB26-to-NHSER26 lookup](https://www.data.gov.uk/dataset/1d16e489-1dc8-443e-9e1c-15de4f961c6d/lsoa-2021-to-sicbl-to-icb-to-nhser-to-lad-april-2026-lookup-in-en), applied to the July 2024 source counts.
-- Practice-to-region lookup: payments2425.csv.
-- Practice-to-ICB mapping: retained Sub ICB codes in payments2425.csv mapped to April 2026 ICBs. Frimley transfers use the NHS May 2026 practice mapping; nine historical practices absent from that mapping use their recorded practice postcode in the ONS May 2026 directory. The postcode assignments are geographic estimates for closed practices, not confirmed commissioning relationships. See data/README.md for sources and methods.
+This section examines how much money could be removed from practices if registered lists were reduced to be in line with the ONS. It uses the calculated payment per capita before removal and multiplies it by the removed number of patients, using Total NHS Payments to General Practice Minus Deductions.
+
+For each geography, the rate is total annual payments divided by English LSOA registrations; the list reduction is the positive difference between those registrations and ONS residents. The loss is the rate multiplied by that reduction, and remaining payments are current payments minus the loss. For example, £165 per patient multiplied by 1,000 removed registrations gives a £165,000 loss. Where ONS residents equal or exceed registrations, the loss is zero. Each geography uses its own rate, so local losses need not sum to the national estimate. This is an illustrative proportional-payment scenario, not a prediction of contractual losses.
+
+```{r national-payment-loss-chart, fig.height=3.5}
+label_chart(
+payment_loss_chart(national_payment_scenario, "Geography", "Potential national payment loss"),
+  "LSOA-level registrations",
+  "Payments: practice-level annual payment data; aggregated to the chart geography."
+)
+```
+
+```{r national-payment-loss-table, results='asis'}
+payment_loss_table(national_payment_scenario, "Geography", "National payment loss scenario")
+```
+
+## Loss by NHS England region
+
+```{r regional-payment-loss-chart, fig.height=7}
+label_chart(
+payment_loss_chart(regional_payment_scenario, "NHS_Region",
+                   "Potential payment loss by NHS England region"),
+  "LSOA-level registrations",
+  "Payments: practice-level annual payment data; aggregated to the chart geography."
+)
+```
+
+```{r regional-payment-loss-table, results='asis'}
+payment_loss_table(regional_payment_scenario, "NHS_Region", "Regional payment loss scenarios")
+```
+
+## Loss by integrated care board
+
+```{r icb-payment-loss-chart, fig.height=13}
+label_chart(
+payment_loss_chart(icb_payment_scenario, "ICB",
+                   "Potential payment loss by ICB (April 2026 geography)"),
+  "LSOA-level registrations",
+  "Payments: practice-level annual payment data; aggregated to the chart geography."
+)
+```
+
+```{r icb-payment-loss-table, results='asis'}
+payment_loss_table(icb_payment_scenario, "ICB", "ICB payment loss scenarios")
+```

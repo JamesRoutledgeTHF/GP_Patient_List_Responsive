@@ -43,22 +43,26 @@ Render `05_Patient_List_Focused.Rmd` with `rmarkdown::render()` in the existing
 R and warehouse environment. Its layout follows
 `05_Patient_List_Focused_Clean.docx`: disparities, population trends, July
 snapshots, IMD, regions, ICBs, GP FTE, fixed-total payments, then payment loss.
-It retains the reference's 20 chart types and 16 comparison tables.
+It retains the reference's 20 chart types and 16 comparison tables, and adds
+two deprivation trend charts, two funding loss-per-resident charts, one trend
+coverage table and two funding-denominator tables.
 Word output uses that document's styles and page settings as its reference.
 The additional source-audit tables are omitted from this clean report; the
 coverage helper still provides the detailed audit for separate analysis.
 
 | Comparison | Registered population source | Other input |
 | --- | --- | --- |
-| National, age, sex, region and ICB | Practice-level registrations | English LSOA ONS estimates |
+| National, age and sex | Practice-level registrations | English LSOA ONS estimates |
+| Regional and ICB population comparisons | English-resident LSOA registrations | English LSOA ONS estimates |
 | IMD deciles | English-resident LSOA registrations with valid IMD | English LSOA ONS estimates |
 | Patients per qualified GP FTE | Practice-level registrations | Practice workforce |
 | Both payment scenarios | Practice-level registrations | Practice annual payments |
 
-All registration comparisons use practice data except IMD. Practice totals
+IMD, regional and ICB population comparisons use residence-based LSOA data;
+national/age/sex comparisons, GP FTE and funding analyses use practice data. Practice totals
 include patients of English GP practices irrespective of residence; Welsh and
-unknown LSOA codes are not excluded from those totals. Only the IMD analysis
-uses LSOA residence counts and filters. The opening source reconciliation
+unknown LSOA codes are not excluded from those totals. The IMD, region and ICB population analyses use LSOA residence counts and
+exclude Welsh/unknown residence. Missing English IMD additionally affects IMD. The opening source reconciliation
 continues to compare the two registration extracts.
 
 Every figure embeds its source in the caption; tables identify it too.
@@ -67,9 +71,10 @@ collapsed; Word tables remain visible. Counts are calculated from the extracts,
 so the changed population scope updates results rather than freezing the
 attachment's numbers.
 
-Welsh and other/unassigned residence codes are excluded from IMD denominators.
-IMD additionally excludes English LSOAs without a valid decile. These residence
-exclusions are not applied to practice-level charts or tables.
+Welsh and other/unassigned residence codes are excluded from the LSOA
+population comparisons.
+IMD additionally excludes English LSOAs without a valid decile. These residence exclusions are not applied to practice-level FTE or funding
+charts and tables.
 Practice-to-LSOA differences, residence exclusions and English IMD loss remain
 separate. The IMD snapshot date does not by itself identify the index edition.
 
@@ -89,7 +94,36 @@ retain the full budget.
 
 Render-time checks reconcile practice age/sex counts to practice totals and IMD
 counts to the coverage helper. Local ONS totals reconcile to the national ONS
-source; assigned practice registration totals may be smaller than the national
-practice source, with the unassigned counts disclosed. Duplicate practice
+source, and the residence-based region/ICB registration charts reconcile to the
+English LSOA registration total. Assigned practice registration totals may be
+smaller than the national practice source, with the unassigned counts disclosed.
+Duplicate practice
 geography keys and missing snapshot sources stop rendering.
 
+
+# Deprivation trends and population-normalised funding losses
+
+Run `Rscript tests/test_imd_trends.R` to test the fixed-IMD balanced cohort,
+decile-to-quintile grouping, count reconciliation, incomplete snapshots,
+invalid IMD, duplicate records and invalid populations. These are base R
+fixtures; they require R but no warehouse connection.
+
+`14_Summarise_IMD_Trends.R` groups deciles 1–2 into quintile 1 (most deprived)
+through 9–10 into quintile 5 (least deprived). It retains English LSOAs present
+in every available July snapshot of both registration and ONS histories with
+a valid decile in the fixed latest warehouse IMD lookup. Both charts therefore
+use the same constant LSOA set, and show cohort population counts, not full
+England totals. The coverage table discloses excluded populations for each
+source/date. Missing years are neither imputed nor connected by the plot.
+The warehouse IMD snapshot date is shown; its edition is not inferred from it.
+
+The primary funding comparison is annual modelled loss divided by ONS residents
+in each region or April 2026 ICB. Tables also give the practice registered count
+and loss per registered patient. Populations are July 2024; payment dates remain
+disclosed separately and are not newly fixed to a financial year. These ratios
+adjust for population size, not geographic density. Funding models retain the
+practice inputs, so cross-boundary registration remains a limitation.
+
+`tests/test_payment_reduction.R` additionally checks the £165,000/9,000-resident
+example, zero ONS population returning an undefined rate, and invariance of
+per-person rates when payment and population totals are scaled together.

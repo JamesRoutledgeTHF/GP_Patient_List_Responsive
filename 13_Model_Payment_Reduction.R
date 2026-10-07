@@ -19,6 +19,9 @@ model_payment_reduction <- function(data) {
   data$Remaining_Payments <- data$Total_Payments - data$Potential_Reduction
   data$Reduction_Pct <- ifelse(data$Total_Payments > 0,
     100 * data$Potential_Reduction / data$Total_Payments, 0)
+  data$Loss_Per_ONS_Resident <- ifelse(data$ONS > 0,
+    data$Potential_Reduction / data$ONS, NA_real_)
+  data$Loss_Per_Registered_Patient <- data$Potential_Reduction / data$Registered
   data
 }
 

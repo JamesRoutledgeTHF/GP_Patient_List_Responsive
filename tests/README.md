@@ -11,9 +11,9 @@ fixture ages in SQLite after replacing TRY_CAST with CAST. It checks boundaries
 including age ten and 90+, the older report's age labels, and the sourced ONS
 England/Wales reference. It does not test SQL Server nonnumeric casts.
 
-`test_focused_lsoa_sources.py` executes the portable national and sex SQL
-aggregates against synthetic English, Welsh, OTHER and missing-residence records.
-It checks sex reconciliation, unfiltered source totals, date filtering, chart
+`test_focused_lsoa_sources.py` executes the portable practice national and
+snapshot SQL aggregates, and the unfiltered LSOA extract used for IMD, against
+synthetic practice/residence records. It checks totals, date filtering, chart
 provenance, source routing and constant-payment-before-loss chart order.
 These checks do not execute R, SQL Server or the full report.
 
@@ -50,16 +50,16 @@ coverage helper still provides the detailed audit for separate analysis.
 
 | Comparison | Registered population source | Other input |
 | --- | --- | --- |
-| National, sex, IMD, region and ICB | English-resident LSOA registrations | English LSOA ONS estimates |
-| Age and age-and-sex | Practice single-age registrations, all residence codes | English LSOA ONS estimates |
-| Patients per qualified GP FTE | English-resident LSOA registrations | Practice workforce |
-| Both payment scenarios | English-resident LSOA registrations | Practice annual payments |
+| National, age, sex, region and ICB | Practice-level registrations | English LSOA ONS estimates |
+| IMD deciles | English-resident LSOA registrations with valid IMD | English LSOA ONS estimates |
+| Patients per qualified GP FTE | Practice-level registrations | Practice workforce |
+| Both payment scenarios | Practice-level registrations | Practice annual payments |
 
-The NHS LSOA release provides sex but no ages:
-https://digital.nhs.uk/data-and-information/publications/statistical/patients-registered-at-a-gp-practice/metadata
-Age charts remain explicitly labelled practice-data exceptions, with no inferred
-age counts. All other registration comparisons use LSOA counts. Practice totals
-are otherwise used only for the introductory source reconciliation.
+All registration comparisons use practice data except IMD. Practice totals
+include patients of English GP practices irrespective of residence; Welsh and
+unknown LSOA codes are not excluded from those totals. Only the IMD analysis
+uses LSOA residence counts and filters. The opening source reconciliation
+continues to compare the two registration extracts.
 
 Every figure embeds its source in the caption; tables identify it too.
 Value-label text is neutral grey. Series colours remain. HTML tables start
@@ -67,24 +67,29 @@ collapsed; Word tables remain visible. Counts are calculated from the extracts,
 so the changed population scope updates results rather than freezing the
 attachment's numbers.
 
-Welsh and other/unassigned residence codes are excluded from all LSOA comparison
-denominators. IMD additionally excludes English LSOAs without a valid decile;
-such codes remain in region/ICB comparisons when their geography is known.
+Welsh and other/unassigned residence codes are excluded from IMD denominators.
+IMD additionally excludes English LSOAs without a valid decile. These residence
+exclusions are not applied to practice-level charts or tables.
 Practice-to-LSOA differences, residence exclusions and English IMD loss remain
 separate. The IMD snapshot date does not by itself identify the index edition.
 
-Local populations use the official ONS April 2026 lookup, retaining July 2024
-counts. Practice workforce/payments use the existing practice-to-2026-ICB map,
+Local ONS populations use the official ONS April 2026 LSOA lookup, retaining
+July 2024 counts. Practice registrations, workforce and payments use the
+existing practice-to-2026-ICB map,
 including nine documented historical postcode estimates for former Frimley
 practices. See `data/README.md` for lookup provenance.
 
-Population denominators follow residence; workforce/payments follow practice
-assignment. These are population-to-resource comparisons, not actual practice
-workload or contracted payment predictions. Annual payment and population
+Registered-population denominators, workforce and payments follow practice
+assignment; ONS denominators follow residence. Cross-boundary registration can
+therefore affect comparisons. The payment scenarios are not contracted payment
+predictions. Annual payment and population
 dates are disclosed separately. Local losses use local rates and positive
 differences and need not sum to the national estimate. Fixed-total averages
 retain the full budget.
 
-Render-time checks reconcile practice age/sex counts to practice totals, LSOA
-sex counts to English LSOA totals, national LSOA snapshots to region/ICB totals,
-and IMD counts to the coverage helper. They stop on missing snapshot sources.
+Render-time checks reconcile practice age/sex counts to practice totals and IMD
+counts to the coverage helper. Local ONS totals reconcile to the national ONS
+source; assigned practice registration totals may be smaller than the national
+practice source, with the unassigned counts disclosed. Duplicate practice
+geography keys and missing snapshot sources stop rendering.
+

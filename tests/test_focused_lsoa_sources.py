@@ -1,4 +1,4 @@
-"""Exercise the new LSOA SQL on synthetic residence/sex records.
+"""Exercise practice registration SQL and the LSOA-only IMD source.
 
 Uses SQLite for the portable aggregate queries, not SQL Server or an R render.
 Also checks exported figure provenance and the reference report's chart order.
@@ -23,7 +23,7 @@ def query_for(name):
     return query
 
 
-class LSOASourceTests(unittest.TestCase):
+class PracticeSourceTests(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(":memory:")
         self.db.execute("ATTACH DATABASE ':memory:' AS Demography")
@@ -40,30 +40,45 @@ class LSOASourceTests(unittest.TestCase):
                 ("E01000001", "2024-10-01", "MALE", 31),
                 ("E01000001", "2025-01-01", "FEMALE", 999)]
         self.db.executemany(f"INSERT INTO {table} VALUES (?,?,?,?)", rows)
+        practice = "Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1"
+        self.db.execute(f"CREATE TABLE {practice} (GP_Practice_Code TEXT, "
+                        "Effective_Snapshot_Date TEXT, Sex TEXT, Age TEXT, Size REAL)")
+        practice_rows = [("P1", "2024-07-01", "FEMALE", "5", 150),
+                         ("P1", "2024-07-01", "MALE", "6", 70),
+                         ("P2", "2024-07-01", "FEMALE", "25", 80),
+                         ("P2", "2024-07-01", "MALE", "26", 60),
+                         (None, "2024-07-01", "FEMALE", "35", 40),
+                         ("P1", "2024-10-01", "MALE", "6", 31),
+                         ("P1", "2025-01-01", "FEMALE", "5", 999)]
+        self.db.executemany(f"INSERT INTO {practice} VALUES (?,?,?,?,?)", practice_rows)
 
     def tearDown(self):
         self.db.close()
 
-    def test_national_excludes_wales_other_and_missing_residence(self):
+    def test_national_uses_complete_practice_source(self):
         self.assertEqual(self.db.execute(query_for("national_registered")).fetchall(),
-                         [("2024-07-01", 200), ("2024-10-01", 31)])
+                         [("2024-07-01", 400), ("2024-10-01", 31)])
 
-    def test_lsoa_sex_reconciles_to_national(self):
-        rows = self.db.execute(query_for("lsoa_registered_sex_time_series")).fetchall()
-        july = {sex: count for date, sex, count in rows if date == "2024-07-01"}
-        self.assertEqual(july, {"Female": 130, "Male": 70})
-        self.assertEqual(sum(july.values()), 200)
+    def test_snapshot_groups_practices_and_retains_lsoa_for_imd(self):
+        practices = dict(self.db.execute(query_for("practice_registered_snapshot")).fetchall())
+        self.assertEqual(practices, {"P1": 220, "P2": 140})
+        self.assertEqual(400 - sum(practices.values()), 40)
         unfiltered = self.db.execute(query_for("lsoa_registered_july")).fetchall()
         self.assertEqual(sum(row[2] for row in unfiltered), 285)
+        english = sum(row[2] for row in unfiltered
+                      if row[0] is not None and row[0].startswith("E01"))
+        self.assertEqual(english, 200)
 
-    def test_age_is_explicit_exception_and_local_denominators_are_lsoa(self):
-        self.assertIn("practice_national_registered", LOADER)
-        self.assertNotIn("practice_registered_snapshot", LOADER + REPORT)
-        self.assertNotIn("practice_region_registered", REPORT)
-        self.assertNotIn("practice_icb_registered", REPORT)
-        for name in ("lsoa_region_registered", "lsoa_icb_registered"):
+    def test_local_population_sources_and_coverage_fields(self):
+        self.assertIn("practice_registered_snapshot", LOADER + REPORT)
+        self.assertNotIn("lsoa_registered_sex_time_series", LOADER + REPORT)
+        for name in ("practice_region_registered", "practice_icb_registered"):
             self.assertIn(name, REPORT)
+        self.assertNotIn("lsoa_region_registered", REPORT)
+        self.assertNotIn("lsoa_icb_registered", REPORT)
+        self.assertRegex(REPORT, r"sex_comparison <- full_join\(\s*practice_registered_demographic_time_series")
         self.assertIn("sex_snapshot <- sex_comparison", REPORT)
+        self.assertIn("imd_snapshot <- imd_july", REPORT)
         fields = set(re.findall(r"registration_coverage\$(\w+)", REPORT))
         helper = (ROOT / "12_Summarise_Registration_Coverage.R").read_text()
         for field in fields:
@@ -74,9 +89,8 @@ class LSOASourceTests(unittest.TestCase):
         charts = [(name, code) for name, code in chunks
                   if "label_chart(" in code and name != "setup"]
         self.assertEqual(len(charts), 20)
-        age_charts = {"age-time-series", "age-snapshot-chart", "age-sex-snapshot-chart"}
         for name, code in charts:
-            source = "Practice-level registrations" if name in age_charts else "LSOA-level registrations"
+            source = "LSOA-level registrations" if name == "imd-snapshot-chart" else "Practice-level registrations"
             self.assertIn('"' + source + '"', code, name)
             if "patients-per-gp" in name:
                 self.assertIn("practice-level workforce", code)
@@ -92,3 +106,4 @@ class LSOASourceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

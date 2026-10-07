@@ -35,7 +35,7 @@ age_case <- "
   END
 "
 
-practice_national_registered <- DBI::dbGetQuery(
+national_registered <- DBI::dbGetQuery(
   con,
   glue::glue("
     SELECT
@@ -52,42 +52,6 @@ practice_national_registered <- DBI::dbGetQuery(
     Period = as.Date(Period),
     Source = "Registered patients"
   )
-
-# All non-age population comparisons use English-resident LSOA registrations.
-# Practice totals are retained only for source reconciliation and age analyses.
-national_registered <- DBI::dbGetQuery(
-  con,
-  glue::glue("
-    SELECT Effective_Snapshot_Date AS Period, SUM(Size) AS Population
-    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
-    WHERE Effective_Snapshot_Date >= '{start_sql}'
-      AND Effective_Snapshot_Date <= '{end_sql}'
-      AND LSOA_Code LIKE 'E01%'
-    GROUP BY Effective_Snapshot_Date
-    ORDER BY Effective_Snapshot_Date
-  ")
-) %>%
-  dplyr::mutate(Period = as.Date(Period), Source = "Registered patients")
-
-lsoa_registered_sex_time_series <- DBI::dbGetQuery(
-  con,
-  glue::glue("
-    SELECT Effective_Snapshot_Date AS Period,
-      CASE WHEN UPPER(Sex) = 'FEMALE' THEN 'Female'
-           WHEN UPPER(Sex) = 'MALE' THEN 'Male' END AS Sex,
-      SUM(Size) AS Registered
-    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
-    WHERE Effective_Snapshot_Date >= '{start_sql}'
-      AND Effective_Snapshot_Date <= '{end_sql}'
-      AND LSOA_Code LIKE 'E01%'
-      AND UPPER(Sex) IN ('FEMALE', 'MALE')
-    GROUP BY Effective_Snapshot_Date,
-      CASE WHEN UPPER(Sex) = 'FEMALE' THEN 'Female'
-           WHEN UPPER(Sex) = 'MALE' THEN 'Male' END
-    ORDER BY Effective_Snapshot_Date
-  ")
-) %>%
-  dplyr::mutate(Period = as.Date(Period))
 
 national_ons <- DBI::dbGetQuery(
   con,
@@ -183,12 +147,8 @@ validate_demographic_totals <- function(demographics, totals, value, source) {
   }
 }
 validate_demographic_totals(
-  practice_registered_demographic_time_series, practice_national_registered,
+  practice_registered_demographic_time_series, national_registered,
   "Registered", "Registered patient"
-)
-validate_demographic_totals(
-  lsoa_registered_sex_time_series, national_registered,
-  "Registered", "LSOA registered patient sex"
 )
 validate_demographic_totals(
   ons_demographic_time_series, national_ons, "ONS", "ONS"
@@ -239,6 +199,20 @@ imd_lookup <- DBI::dbGetQuery(
   "
 )
 
+practice_registered_snapshot <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT
+      GP_Practice_Code AS Practice_Code,
+      SUM(Size) AS Registered
+    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_Single_Age1
+    WHERE Effective_Snapshot_Date = '{snapshot_sql}'
+      AND GP_Practice_Code IS NOT NULL
+    GROUP BY GP_Practice_Code
+  ")
+) %>%
+  dplyr::mutate(Practice_Code = as.character(Practice_Code))
+
 qualified_gp_workforce <- DBI::dbGetQuery(
   con,
   glue::glue("
@@ -269,3 +243,5 @@ qualified_gp_workforce <- DBI::dbGetQuery(
     Period = as.Date(Period),
     GP_FTE = as.numeric(GP_FTE)
   )
+
+

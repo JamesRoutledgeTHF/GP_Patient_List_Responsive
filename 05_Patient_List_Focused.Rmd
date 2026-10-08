@@ -820,7 +820,7 @@ imd_snapshot %>%
 
 The first chart compares ONS residents and registered patients in one figure, with a panel for each deprivation quintile. The second shows the percentage difference for each quintile: **100 × (registered patients − ONS residents) / ONS residents**. Positive values mean registrations exceed the resident estimate. Raw differences are also provided in the expandable table.
 
-Both charts request July observations from 2015 onwards. ONS observations are mid-year resident estimates, compared with July registration snapshots in the same calendar year; they are not monthly ONS estimates. Missing years remain unavailable and lines do not bridge gaps. One fixed IMD lookup pairs deciles 1–2 into quintile 1 (most deprived), through 9–10 into quintile 5 (least deprived). This classification is applied retrospectively, rather than using historical IMD rankings.
+Both charts request July observations from 2015 onwards. Registrations use 2011-LSOA releases through July 2023 and 2021-LSOA releases from July 2024. The July 2024 switch is marked and lines are broken at that point, because both geography and the registration data source changed; a jump across it should not be interpreted solely as population change. ONS observations are mid-year resident estimates, compared with July registration snapshots in the same calendar year; they are not monthly ONS estimates. Missing years remain unavailable and lines do not bridge gaps. One fixed IMD lookup pairs deciles 1–2 into quintile 1 (most deprived), through 9–10 into quintile 5 (least deprived). This classification is applied retrospectively, rather than using historical IMD rankings.
 
 ```{r imd-quintile-trend-prepare, include=FALSE}
 imd_trends <- summarise_imd_trends(
@@ -840,13 +840,13 @@ imd_trend_data <- imd_trends$trend %>%
     Period = as.Date(paste0(Year, "-07-01"))) %>%
   group_by(Source, Quintile) %>%
   arrange(Year, .by_group = TRUE) %>%
-  mutate(Run = cumsum(Year != lag(Year, default = 0L) + 1L)) %>%
+  mutate(Run = cumsum(Year != lag(Year, default = 0L) + 1L | Year == 2024L)) %>%
   ungroup()
 imd_difference_data <- imd_comparison %>%
   filter(is.finite(Pct_Difference)) %>%
   group_by(Quintile) %>%
   arrange(Year, .by_group = TRUE) %>%
-  mutate(Run = cumsum(Year != lag(Year, default = 0L) + 1L)) %>%
+  mutate(Run = cumsum(Year != lag(Year, default = 0L) + 1L | Year == 2024L)) %>%
   ungroup()
 imd_trend_source_date <- paste(sort(unique(as.character(imd_lookup$IMD_Source_Date))),
                                collapse = ", ")
@@ -856,11 +856,13 @@ imd_first_ons_year <- min(imd_trend_data$Year[
   imd_trend_data$Source == "ONS population estimate"])
 ```
 
-The shared cohort contains **`r scales::comma(length(imd_trends$lsoa_codes))` English LSOAs** with valid IMD and data in every available source snapshot. These counts describe that cohort, not the full English population. Welsh/unknown residence codes, invalid IMD and LSOAs missing from any source snapshot are excluded. The warehouse IMD snapshot is `r imd_trend_source_date`; this date alone does not establish the index edition. Within the requested period, the first available registration year is `r imd_first_registered_year` and the first available ONS year is `r imd_first_ons_year`. The coverage table shows the population retained and excluded at each available date. A difference is calculated only when both sources are available for the same year and quintile; a zero ONS denominator has no defined percentage.
+The shared cohort contains **`r scales::comma(length(imd_trends$lsoa_codes))` English LSOAs** with valid IMD and data in every available source snapshot. These counts describe that cohort, not the full English population. Historical 2011 codes are matched by exact code to the fixed IMD lookup and all ONS/registration snapshots; codes replaced by splits or mergers are excluded rather than allocating their patients to new areas. This is a common-code cohort, not a complete conversion from 2011 to 2021 geography. Welsh/unknown residence codes, invalid IMD and LSOAs missing from any source snapshot are excluded. The warehouse IMD snapshot is `r imd_trend_source_date`; this date alone does not establish the index edition. Within the requested period, the first available registration year is `r imd_first_registered_year` and the first available ONS year is `r imd_first_ons_year`. The coverage table shows the population retained and excluded at each available date. A difference is calculated only when both sources are available for the same year and quintile; a zero ONS denominator has no defined percentage.
 
 ```{r imd-quintile-population-time-series, fig.height=9}
 label_chart(
   ggplot(imd_trend_data, aes(Period, Population, colour = Source, linetype = Source)) +
+    geom_vline(xintercept = as.numeric(as.Date("2024-07-01")),
+               linetype = "dashed", colour = "grey60") +
     geom_line(aes(group = interaction(Source, Quintile, Run)), linewidth = 0.9) +
     geom_point(size = 1.8) +
     facet_wrap(~Quintile, ncol = 2, scales = "free_y") +
@@ -884,6 +886,8 @@ label_chart(
 label_chart(
   ggplot(imd_difference_data, aes(Period, Pct_Difference, colour = Quintile)) +
     geom_hline(yintercept = 0, colour = "grey60", linetype = "dashed") +
+    geom_vline(xintercept = as.numeric(as.Date("2024-07-01")),
+               linetype = "dashed", colour = "grey60") +
     geom_line(aes(group = interaction(Quintile, Run)), linewidth = 0.9) +
     geom_point(size = 2) +
     scale_colour_manual(values = c("#7B3294", "#008837", "#D95F02", "#2166AC", "#A6761D"),
@@ -1794,4 +1798,5 @@ payment_loss_per_resident_table(icb_payment_scenario, "ICB",
 ```{r icb-payment-loss-table, results='asis'}
 payment_loss_table(icb_payment_scenario, "ICB", "ICB payment loss scenarios")
 ```
+
 

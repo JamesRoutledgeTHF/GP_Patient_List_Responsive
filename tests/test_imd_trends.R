@@ -64,5 +64,23 @@ stopifnot(compare_imd_trends(below)$Pct_Difference[1] == -10)
 duplicate <- paired[1, ]; duplicate$Period <- as.Date("2015-07-31")
 err <- tryCatch(compare_imd_trends(rbind(paired, duplicate)), error = identity)
 stopifnot(inherits(err, "error"), grepl("ambiguous", conditionMessage(err)))
+# A retired 2011 code and its replacement 2021 code cannot enter a fixed-code
+# cohort. The shared code is counted once at each source/date.
+transition <- expand.grid(Period = as.Date(c("2023-07-01", "2024-07-01")),
+  Source = c("Registered patients", "ONS population estimate"),
+  stringsAsFactors = FALSE)
+shared <- transition; shared$LSOA_Code <- "E01000001"; shared$Population <- 100
+changed <- transition
+changed$LSOA_Code <- ifelse(changed$Period < as.Date("2024-07-01"),
+                          "E01000002", "E01000003")
+changed$Population <- 50
+transition_lookup <- data.frame(LSOA_Code = c("E01000001", "E01000003"),
+                                IMD_Decile = c(1, 10))
+cohort <- summarise_imd_trends(rbind(shared, changed), transition_lookup)
+stopifnot(identical(cohort$lsoa_codes, "E01000001"),
+          all(cohort$trend$Population == 100),
+          all(cohort$coverage$English_Population == 150),
+          all(cohort$coverage$Population_Excluded == 50))
 cat("IMD trend and comparison checks passed.\n")
+
 

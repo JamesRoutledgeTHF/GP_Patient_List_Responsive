@@ -820,7 +820,7 @@ imd_snapshot %>%
 
 The first chart compares ONS residents and registered patients in one figure, with a panel for each deprivation quintile. The second shows the percentage difference for each quintile: **100 × (registered patients − ONS residents) / ONS residents**. Positive values mean registrations exceed the resident estimate. Raw differences are also provided in the expandable table.
 
-Both charts request July observations from 2015 onwards. Registrations use 2011-LSOA releases through July 2023 and 2021-LSOA releases from July 2024. The July 2024 switch is marked and lines are broken at that point, because both geography and the registration data source changed; a jump across it should not be interpreted solely as population change. ONS observations are mid-year resident estimates, compared with July registration snapshots in the same calendar year; they are not monthly ONS estimates. Missing years remain unavailable and lines do not bridge gaps. One fixed IMD lookup pairs deciles 1–2 into quintile 1 (most deprived), through 9–10 into quintile 5 (least deprived). This classification is applied retrospectively, rather than using historical IMD rankings.
+Both charts request July observations from 2015 onwards. Registrations use 2011-LSOA releases through July 2023 and 2021-LSOA releases from July 2024. The July 2024 switch is marked, and consecutive available years are connected across it. Both geography and the registration data source changed, so movement across this marker should not be interpreted solely as population change. ONS observations are mid-year resident estimates, compared with July registration snapshots in the same calendar year; they are not monthly ONS estimates. Missing years remain unavailable and lines do not bridge gaps. One fixed IMD lookup pairs deciles 1–2 into quintile 1 (most deprived), through 9–10 into quintile 5 (least deprived). This classification is applied retrospectively, rather than using historical IMD rankings.
 
 ```{r imd-quintile-trend-prepare, include=FALSE}
 imd_trends <- summarise_imd_trends(
@@ -840,13 +840,13 @@ imd_trend_data <- imd_trends$trend %>%
     Period = as.Date(paste0(Year, "-07-01"))) %>%
   group_by(Source, Quintile) %>%
   arrange(Year, .by_group = TRUE) %>%
-  mutate(Run = cumsum(Year != lag(Year, default = 0L) + 1L | Year == 2024L)) %>%
+  mutate(Run = cumsum(Year != lag(Year, default = 0L) + 1L)) %>%
   ungroup()
 imd_difference_data <- imd_comparison %>%
   filter(is.finite(Pct_Difference)) %>%
   group_by(Quintile) %>%
   arrange(Year, .by_group = TRUE) %>%
-  mutate(Run = cumsum(Year != lag(Year, default = 0L) + 1L | Year == 2024L)) %>%
+  mutate(Run = cumsum(Year != lag(Year, default = 0L) + 1L)) %>%
   ungroup()
 imd_trend_source_date <- paste(sort(unique(as.character(imd_lookup$IMD_Source_Date))),
                                collapse = ", ")

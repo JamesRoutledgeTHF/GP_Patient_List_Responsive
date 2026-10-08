@@ -126,8 +126,9 @@ multiple names are present. Actual historical availability must be checked in
 the warehouse. Only codes shared across the histories and linked to the fixed
 IMD lookup are retained; split/merged codes are excluded, not apportioned.
 This common-code cohort does not constitute a full geography conversion.
-Both figures mark July 2024 and break lines there to disclose the geography
-and registration-source change.
+Both figures mark July 2024 to disclose the geography and registration-source
+change, while connecting consecutive available years across the transition.
+Missing years still break the lines in both the population and difference charts.
 The first chart combines both sources in panels by quintile; the
 second compares quintiles using 100 × (registered − ONS) / ONS. Raw differences
 and source counts are included in an expandable table. Comparisons match the

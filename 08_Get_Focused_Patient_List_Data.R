@@ -191,7 +191,7 @@ lsoa_registered_history <- DBI::dbGetQuery(
     SELECT LSOA_Code, Effective_Snapshot_Date AS Period,
       SUM(Size) AS Population
     FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
-    WHERE Effective_Snapshot_Date >= '{start_sql}'
+    WHERE Effective_Snapshot_Date >= '2015-07-01'
       AND Effective_Snapshot_Date <= '{end_sql}'
       AND MONTH(Effective_Snapshot_Date) = 7
       AND LSOA_Code LIKE 'E01%'
@@ -206,7 +206,7 @@ lsoa_ons_history <- DBI::dbGetQuery(
     SELECT Area_Code AS LSOA_Code, Effective_Snapshot_Date AS Period,
       SUM(Size) AS Population
     FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
-    WHERE Effective_Snapshot_Date >= '{start_sql}'
+    WHERE Effective_Snapshot_Date >= '2015-07-01'
       AND Effective_Snapshot_Date <= '{end_sql}'
       AND MONTH(Effective_Snapshot_Date) = 7
       AND Area_Code LIKE 'E01%'
@@ -275,5 +275,6 @@ qualified_gp_workforce <- DBI::dbGetQuery(
     Period = as.Date(Period),
     GP_FTE = as.numeric(GP_FTE)
   )
+
 
 

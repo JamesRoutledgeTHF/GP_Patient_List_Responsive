@@ -818,56 +818,100 @@ imd_snapshot %>%
 
 # Population over time by IMD quintile
 
-These two charts use July snapshots and one fixed IMD lookup, pairing deciles 1–2 into quintile 1 (most deprived), 3–4 into quintile 2, through 9–10 into quintile 5 (least deprived). The classification is applied retrospectively; these are not historical IMD rankings.
+The first chart compares ONS residents and registered patients in one figure, with a panel for each deprivation quintile. The second shows the percentage difference for each quintile: **100 × (registered patients − ONS residents) / ONS residents**. Positive values mean registrations exceed the resident estimate. Raw differences are also provided in the expandable table.
+
+Both charts request July observations from 2015 onwards. ONS observations are mid-year resident estimates, compared with July registration snapshots in the same calendar year; they are not monthly ONS estimates. Missing years remain unavailable and lines do not bridge gaps. One fixed IMD lookup pairs deciles 1–2 into quintile 1 (most deprived), through 9–10 into quintile 5 (least deprived). This classification is applied retrospectively, rather than using historical IMD rankings.
 
 ```{r imd-quintile-trend-prepare, include=FALSE}
 imd_trends <- summarise_imd_trends(
   bind_rows(lsoa_registered_history, lsoa_ons_history), imd_lookup
 )
+quintile_labels <- c("1 (Most deprived)", "2", "3", "4", "5 (Least deprived)")
+imd_last_year <- max(as.integer(format(imd_trends$trend$Period, "%Y")))
+imd_axis_dates <- as.Date(paste0(2015:imd_last_year, "-07-01"))
+imd_comparison <- expand.grid(Year = 2015:imd_last_year, Quintile = 1:5) %>%
+  left_join(compare_imd_trends(imd_trends$trend), by = c("Year", "Quintile")) %>%
+  mutate(Period = as.Date(paste0(Year, "-07-01")),
+    Quintile = factor(Quintile, levels = 1:5, labels = quintile_labels)) %>%
+  arrange(Quintile, Year)
 imd_trend_data <- imd_trends$trend %>%
-  mutate(Quintile = factor(Quintile, levels = 1:5,
-    labels = c("1 (Most deprived)", "2", "3", "4", "5 (Least deprived)"))) %>%
+  mutate(Quintile = factor(Quintile, levels = 1:5, labels = quintile_labels),
+    Year = as.integer(format(Period, "%Y")),
+    Period = as.Date(paste0(Year, "-07-01"))) %>%
   group_by(Source, Quintile) %>%
-  arrange(Period, .by_group = TRUE) %>%
-  mutate(Year = as.integer(format(Period, "%Y")),
-         Run = cumsum(c(TRUE, diff(Year) > 1))) %>%
+  arrange(Year, .by_group = TRUE) %>%
+  mutate(Run = cumsum(Year != lag(Year, default = 0L) + 1L)) %>%
+  ungroup()
+imd_difference_data <- imd_comparison %>%
+  filter(is.finite(Pct_Difference)) %>%
+  group_by(Quintile) %>%
+  arrange(Year, .by_group = TRUE) %>%
+  mutate(Run = cumsum(Year != lag(Year, default = 0L) + 1L)) %>%
   ungroup()
 imd_trend_source_date <- paste(sort(unique(as.character(imd_lookup$IMD_Source_Date))),
                                collapse = ", ")
-imd_trend_chart <- function(source_name, title) {
-  chart_data <- imd_trend_data %>% filter(Source == source_name)
-  ggplot(chart_data, aes(Period, Population, colour = Quintile)) +
+imd_first_registered_year <- min(imd_trend_data$Year[
+  imd_trend_data$Source == "Registered patients"])
+imd_first_ons_year <- min(imd_trend_data$Year[
+  imd_trend_data$Source == "ONS population estimate"])
+```
+
+The shared cohort contains **`r scales::comma(length(imd_trends$lsoa_codes))` English LSOAs** with valid IMD and data in every available source snapshot. These counts describe that cohort, not the full English population. Welsh/unknown residence codes, invalid IMD and LSOAs missing from any source snapshot are excluded. The warehouse IMD snapshot is `r imd_trend_source_date`; this date alone does not establish the index edition. Within the requested period, the first available registration year is `r imd_first_registered_year` and the first available ONS year is `r imd_first_ons_year`. The coverage table shows the population retained and excluded at each available date. A difference is calculated only when both sources are available for the same year and quintile; a zero ONS denominator has no defined percentage.
+
+```{r imd-quintile-population-time-series, fig.height=9}
+label_chart(
+  ggplot(imd_trend_data, aes(Period, Population, colour = Source, linetype = Source)) +
+    geom_line(aes(group = interaction(Source, Quintile, Run)), linewidth = 0.9) +
+    geom_point(size = 1.8) +
+    facet_wrap(~Quintile, ncol = 2, scales = "free_y") +
+    scale_colour_manual(values = c("Registered patients" = "#2166AC",
+                                  "ONS population estimate" = "#B2182B")) +
+    scale_x_date(breaks = imd_axis_dates, date_labels = "%Y",
+                 limits = range(imd_axis_dates)) +
+    scale_y_continuous(labels = scales::label_number(scale = 1e-6, suffix = "m")) +
+    labs(title = "ONS residents and registered patients by IMD quintile",
+      subtitle = "July observations from 2015; each panel is one quintile",
+      x = NULL, y = "Population in common LSOA cohort", colour = NULL, linetype = NULL,
+      caption = "Fixed IMD classification and common LSOA cohort. Missing years are not imputed or joined across; panel population scales vary.") +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "top", panel.grid.minor = element_blank(),
+          axis.text.x = element_text(angle = 45, hjust = 1)),
+  "LSOA-level registrations", "Both series are grouped by patients' or residents' English LSOA of residence."
+)
+```
+
+```{r imd-quintile-difference-time-series, fig.height=6}
+label_chart(
+  ggplot(imd_difference_data, aes(Period, Pct_Difference, colour = Quintile)) +
+    geom_hline(yintercept = 0, colour = "grey60", linetype = "dashed") +
     geom_line(aes(group = interaction(Quintile, Run)), linewidth = 0.9) +
     geom_point(size = 2) +
     scale_colour_manual(values = c("#7B3294", "#008837", "#D95F02", "#2166AC", "#A6761D"),
                         drop = FALSE) +
-    scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
-    scale_y_continuous(labels = scales::label_number(scale = 1e-6, suffix = "m")) +
-    labs(title = title,
-      subtitle = paste("July snapshots:", format(min(chart_data$Period), "%Y"),
-                       "to", format(max(chart_data$Period), "%Y")),
-      x = NULL, y = "Population in common LSOA cohort", colour = "IMD quintile",
-      caption = paste0(
-        "Source: ", if (source_name == "Registered patients")
-          "LSOA-level registrations by English residence." else
-          "ONS English LSOA population estimates.",
-        "\nFixed IMD classification; common LSOAs in every available snapshot of both sources.",
-        "\nMissing years are not imputed or joined across.")) +
+    scale_x_date(breaks = imd_axis_dates, date_labels = "%Y",
+                 limits = range(imd_axis_dates)) +
+    scale_y_continuous(labels = scales::label_number(suffix = "%")) +
+    labs(title = "Registered patients versus ONS residents: difference by IMD quintile",
+      subtitle = "July observations from 2015; positive values indicate more registrations",
+      x = NULL, y = "Difference relative to ONS (%)", colour = "IMD quintile",
+      caption = "100 × (registered patients − ONS residents) / ONS residents. Fixed common LSOA cohort; differences require both sources in the same year. Missing years are not joined across.") +
     theme_minimal(base_size = 11) +
     theme(legend.position = "bottom", panel.grid.minor = element_blank(),
-          axis.text.x = element_text(angle = 45, hjust = 1),
-          plot.caption = element_text(colour = "grey20", hjust = 0))
-}
+          axis.text.x = element_text(angle = 45, hjust = 1)),
+  "LSOA-level registrations"
+)
 ```
 
-The shared cohort contains **`r scales::comma(length(imd_trends$lsoa_codes))` English LSOAs** with valid IMD and data in every available source snapshot. These counts describe that cohort, not the full English population. Welsh/unknown residence codes, invalid IMD and LSOAs missing from any source snapshot are excluded. The warehouse IMD snapshot is `r imd_trend_source_date`; this date alone does not establish the index edition. The coverage table shows the population retained and excluded at each date.
-
-```{r imd-quintile-ons-time-series, fig.height=6}
-imd_trend_chart("ONS population estimate", "ONS resident population over time by IMD quintile")
-```
-
-```{r imd-quintile-registered-time-series, fig.height=6}
-imd_trend_chart("Registered patients", "Registered patients over time by IMD quintile")
+```{r imd-quintile-difference-table, results='asis'}
+imd_comparison %>%
+  transmute(Year, Quintile,
+    Registered = ifelse(is.na(Registered), "Not available", scales::comma(Registered)),
+    ONS = ifelse(is.na(ONS), "Not available", scales::comma(ONS)),
+    `Raw difference` = ifelse(is.na(Raw_Difference), "Not available",
+                              scales::comma(Raw_Difference)),
+    `Difference / ONS` = ifelse(is.na(Pct_Difference), "Not defined",
+                                  paste0(round(Pct_Difference, 1), "%"))) %>%
+  report_table(caption = "July population counts and differences by IMD quintile")
 ```
 
 ```{r imd-quintile-coverage-table, results='asis'}
@@ -1750,3 +1794,4 @@ payment_loss_per_resident_table(icb_payment_scenario, "ICB",
 ```{r icb-payment-loss-table, results='asis'}
 payment_loss_table(icb_payment_scenario, "ICB", "ICB payment loss scenarios")
 ```
+

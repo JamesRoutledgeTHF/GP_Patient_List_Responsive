@@ -38,4 +38,31 @@ must_fail(history[history$Source == "Registered patients", ], lookup, "both sour
 disjoint <- history[(history$Source == "Registered patients" & history$LSOA_Code == lookup$LSOA_Code[1]) |
                     (history$Source == "ONS population estimate" & history$LSOA_Code != lookup$LSOA_Code[1]), ]
 must_fail(disjoint, lookup, "common LSOA cohort")
-cat("IMD trend checks passed.\n")
+# Match July snapshots by year, even when their day differs.
+paired <- data.frame(Source = c("Registered patients", "ONS population estimate",
+  "Registered patients", "ONS population estimate", "Registered patients"),
+  Period = as.Date(c("2015-07-01", "2015-07-31", "2016-07-01", "2016-07-01",
+                    "2018-07-01")),
+  Quintile = 1L, Population = c(110, 100, 5, 0, 120))
+comparison <- compare_imd_trends(paired)
+stopifnot(nrow(comparison) == 3,
+          comparison$Raw_Difference[1] == 10,
+          comparison$Pct_Difference[1] == 10,
+          comparison$Raw_Difference[2] == 5,
+          is.na(comparison$Pct_Difference[2]),
+          is.na(comparison$ONS[3]),
+          is.na(comparison$Raw_Difference[3]),
+          is.na(comparison$Pct_Difference[3]),
+          all(format(comparison$Period, "%m-%d") == "07-01"))
+scaled <- paired; scaled$Population <- 10 * scaled$Population
+scaled_comparison <- compare_imd_trends(scaled)
+stopifnot(identical(scaled_comparison$Pct_Difference, comparison$Pct_Difference),
+          isTRUE(all.equal(scaled_comparison$Raw_Difference,
+                           comparison$Raw_Difference * 10)))
+below <- paired; below$Population[1] <- 90
+stopifnot(compare_imd_trends(below)$Pct_Difference[1] == -10)
+duplicate <- paired[1, ]; duplicate$Period <- as.Date("2015-07-31")
+err <- tryCatch(compare_imd_trends(rbind(paired, duplicate)), error = identity)
+stopifnot(inherits(err, "error"), grepl("ambiguous", conditionMessage(err)))
+cat("IMD trend and comparison checks passed.\n")
+

@@ -105,7 +105,9 @@ geography keys and missing snapshot sources stop rendering.
 
 Run `Rscript tests/test_imd_trends.R` to test the fixed-IMD balanced cohort,
 decile-to-quintile grouping, count reconciliation, incomplete snapshots,
-invalid IMD, duplicate records and invalid populations. These are base R
+invalid IMD, duplicate records and invalid populations. Comparison tests cover
+same-year July date alignment, missing source-years, zero denominators, signs,
+percentage scaling and ambiguous duplicate snapshots. These are base R
 fixtures; they require R but no warehouse connection.
 
 `14_Summarise_IMD_Trends.R` groups deciles 1–2 into quintile 1 (most deprived)
@@ -116,6 +118,13 @@ use the same constant LSOA set, and show cohort population counts, not full
 England totals. The coverage table discloses excluded populations for each
 source/date. Missing years are neither imputed nor connected by the plot.
 The warehouse IMD snapshot date is shown; its edition is not inferred from it.
+History queries begin at July 2015 independently of the rest of the report's
+start date. The first chart combines both sources in panels by quintile; the
+second compares quintiles using 100 × (registered − ONS) / ONS. Raw differences
+and source counts are included in an expandable table. Comparisons match the
+calendar year, permit different July snapshot days, and require both sources.
+Unavailable years stay missing rather than becoming zero, and zero ONS counts
+produce an undefined percentage.
 
 The primary funding comparison is annual modelled loss divided by ONS residents
 in each region or April 2026 ICB. Tables also give the practice registered count
@@ -127,3 +136,4 @@ practice inputs, so cross-boundary registration remains a limitation.
 `tests/test_payment_reduction.R` additionally checks the £165,000/9,000-resident
 example, zero ONS population returning an undefined rate, and invariance of
 per-person rates when payment and population totals are scaled together.
+

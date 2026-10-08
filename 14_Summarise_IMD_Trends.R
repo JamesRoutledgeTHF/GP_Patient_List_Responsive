@@ -56,3 +56,33 @@ summarise_imd_trends <- function(history, imd_lookup) {
   coverage <- coverage[order(coverage$Source, coverage$Period), ]
   list(trend = trend, coverage = coverage, lsoa_codes = cohort)
 }
+
+# Align July snapshots by calendar year, retaining unpaired observations as NA.
+compare_imd_trends <- function(trend) {
+  required <- c("Source", "Period", "Quintile", "Population")
+  if (!all(required %in% names(trend)) || !nrow(trend)) {
+    stop("Quintile comparison requires source, period, quintile and population.")
+  }
+  trend$Period <- as.Date(trend$Period)
+  if (anyNA(trend[required]) || !is.numeric(trend$Population) ||
+      any(!is.finite(trend$Population)) || any(trend$Population < 0) ||
+      any(format(trend$Period, "%m") != "07") ||
+      any(!trend$Quintile %in% 1:5) ||
+      !setequal(unique(trend$Source), c("Registered patients", "ONS population estimate"))) {
+    stop("Quintile comparison requires valid July observations for both sources.")
+  }
+  trend$Year <- as.integer(format(trend$Period, "%Y"))
+  if (anyDuplicated(trend[c("Source", "Year", "Quintile")])) {
+    stop("Multiple July observations for a source/year/quintile are ambiguous.")
+  }
+  registered <- trend[trend$Source == "Registered patients", c("Year", "Quintile", "Population")]
+  ons <- trend[trend$Source == "ONS population estimate", c("Year", "Quintile", "Population")]
+  names(registered)[3] <- "Registered"
+  names(ons)[3] <- "ONS"
+  comparison <- merge(registered, ons, by = c("Year", "Quintile"), all = TRUE)
+  comparison$Period <- as.Date(paste0(comparison$Year, "-07-01"))
+  comparison$Raw_Difference <- comparison$Registered - comparison$ONS
+  comparison$Pct_Difference <- ifelse(!is.na(comparison$ONS) & comparison$ONS > 0,
+    100 * comparison$Raw_Difference / comparison$ONS, NA_real_)
+  comparison[order(comparison$Quintile, comparison$Year), ]
+}

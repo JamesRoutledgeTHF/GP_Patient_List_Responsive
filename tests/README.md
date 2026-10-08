@@ -119,7 +119,16 @@ England totals. The coverage table discloses excluded populations for each
 source/date. Missing years are neither imputed nor connected by the plot.
 The warehouse IMD snapshot date is shown; its edition is not inferred from it.
 History queries begin at July 2015 independently of the rest of the report's
-start date. The first chart combines both sources in panels by quintile; the
+start date. Registrations use the legacy 2011-LSOA table before July 2024 and
+the 2021-LSOA table from July 2024, with no overlap. The loader resolves exactly
+one supported legacy table name from database metadata and stops if none or
+multiple names are present. Actual historical availability must be checked in
+the warehouse. Only codes shared across the histories and linked to the fixed
+IMD lookup are retained; split/merged codes are excluded, not apportioned.
+This common-code cohort does not constitute a full geography conversion.
+Both figures mark July 2024 and break lines there to disclose the geography
+and registration-source change.
+The first chart combines both sources in panels by quintile; the
 second compares quintiles using 100 × (registered − ONS) / ONS. Raw differences
 and source counts are included in an expandable table. Comparisons match the
 calendar year, permit different July snapshot days, and require both sources.
@@ -136,4 +145,5 @@ practice inputs, so cross-boundary registration remains a limitation.
 `tests/test_payment_reduction.R` additionally checks the £165,000/9,000-resident
 example, zero ONS population returning an undefined rate, and invariance of
 per-person rates when payment and population totals are scaled together.
+
 

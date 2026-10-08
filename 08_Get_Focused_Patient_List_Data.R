@@ -185,20 +185,62 @@ lsoa_ons_july <- DBI::dbGetQuery(
 
 # July-only LSOA histories for the deprivation quintile trend charts.
 # Dates reflect available warehouse snapshots; no missing years are imputed.
-lsoa_registered_history <- DBI::dbGetQuery(
+# Historical releases use 2011 LSOAs; July 2024 introduces the 2021 series.
+# Resolve the legacy warehouse table explicitly rather than assume its name.
+lsoa_2011_tables <- DBI::dbGetQuery(con, "
+  SELECT TABLE_NAME
+  FROM INFORMATION_SCHEMA.TABLES
+  WHERE TABLE_SCHEMA = 'Demography'
+    AND TABLE_NAME IN (
+      'No_Of_Patients_Regd_At_GP_Practice_LSOA_Level1',
+      'No_Of_Patients_Regd_At_GP_Practice_LSOA_2011_Level1'
+    )
+")
+if (nrow(lsoa_2011_tables) != 1L) {
+  stop("Expected one historical 2011-LSOA registration table in Demography; found ",
+       nrow(lsoa_2011_tables),
+       ". Confirm the legacy table name before rendering the deprivation history.")
+}
+lsoa_2011_table <- lsoa_2011_tables$TABLE_NAME[[1]]
+stopifnot(lsoa_2011_table %in% c(
+  "No_Of_Patients_Regd_At_GP_Practice_LSOA_Level1",
+  "No_Of_Patients_Regd_At_GP_Practice_LSOA_2011_Level1"
+))
+lsoa_registered_history_2011 <- DBI::dbGetQuery(
   con,
   glue::glue("
     SELECT LSOA_Code, Effective_Snapshot_Date AS Period,
       SUM(Size) AS Population
-    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
+    FROM Demography.[{lsoa_2011_table}]
     WHERE Effective_Snapshot_Date >= '2015-07-01'
+      AND Effective_Snapshot_Date < '2024-07-01'
       AND Effective_Snapshot_Date <= '{end_sql}'
       AND MONTH(Effective_Snapshot_Date) = 7
       AND LSOA_Code LIKE 'E01%'
     GROUP BY LSOA_Code, Effective_Snapshot_Date
     ORDER BY Effective_Snapshot_Date, LSOA_Code
   ")
-) %>% dplyr::mutate(Period = as.Date(Period), Source = "Registered patients")
+) %>% dplyr::mutate(Period = as.Date(Period), Source = "Registered patients",
+                  Registration_Geography = "2011 LSOAs")
+
+lsoa_registered_history_2021 <- DBI::dbGetQuery(
+  con,
+  glue::glue("
+    SELECT LSOA_Code, Effective_Snapshot_Date AS Period,
+      SUM(Size) AS Population
+    FROM Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1
+    WHERE Effective_Snapshot_Date >= '2024-07-01'
+      AND Effective_Snapshot_Date <= '{end_sql}'
+      AND MONTH(Effective_Snapshot_Date) = 7
+      AND LSOA_Code LIKE 'E01%'
+    GROUP BY LSOA_Code, Effective_Snapshot_Date
+    ORDER BY Effective_Snapshot_Date, LSOA_Code
+  ")
+) %>% dplyr::mutate(Period = as.Date(Period), Source = "Registered patients",
+                  Registration_Geography = "2021 LSOAs")
+lsoa_registered_history <- dplyr::bind_rows(
+  lsoa_registered_history_2011, lsoa_registered_history_2021
+)
 
 lsoa_ons_history <- DBI::dbGetQuery(
   con,
@@ -275,6 +317,7 @@ qualified_gp_workforce <- DBI::dbGetQuery(
     Period = as.Date(Period),
     GP_FTE = as.numeric(GP_FTE)
   )
+
 
 
 

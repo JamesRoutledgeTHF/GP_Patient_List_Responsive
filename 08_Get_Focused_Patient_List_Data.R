@@ -20,17 +20,11 @@ snapshot_sql <- date_sql(snapshot_date)
 
 age_case <- "
   CASE
-    WHEN Age = '95+' THEN '90+'
-    WHEN TRY_CAST(Age AS INT) BETWEEN 0 AND 9 THEN '0-9'
-    WHEN TRY_CAST(Age AS INT) BETWEEN 10 AND 19 THEN '10-19'
-    WHEN TRY_CAST(Age AS INT) BETWEEN 20 AND 29 THEN '20-29'
-    WHEN TRY_CAST(Age AS INT) BETWEEN 30 AND 39 THEN '30-39'
-    WHEN TRY_CAST(Age AS INT) BETWEEN 40 AND 49 THEN '40-49'
-    WHEN TRY_CAST(Age AS INT) BETWEEN 50 AND 59 THEN '50-59'
-    WHEN TRY_CAST(Age AS INT) BETWEEN 60 AND 69 THEN '60-69'
-    WHEN TRY_CAST(Age AS INT) BETWEEN 70 AND 79 THEN '70-79'
-    WHEN TRY_CAST(Age AS INT) BETWEEN 80 AND 89 THEN '80-89'
-    WHEN TRY_CAST(Age AS INT) >= 90 THEN '90+'
+    WHEN Age = '95+' THEN '60+'
+    WHEN TRY_CAST(Age AS INT) BETWEEN 0 AND 19 THEN '0-19'
+    WHEN TRY_CAST(Age AS INT) BETWEEN 20 AND 39 THEN '20-39'
+    WHEN TRY_CAST(Age AS INT) BETWEEN 40 AND 59 THEN '40-59'
+    WHEN TRY_CAST(Age AS INT) >= 60 THEN '60+'
     ELSE NULL
   END
 "
@@ -212,7 +206,7 @@ lsoa_registered_history_2011 <- DBI::dbGetQuery(
     SELECT LSOA_Code, Effective_Snapshot_Date AS Period,
       SUM(Size) AS Population
     FROM Demography.[{lsoa_2011_table}]
-    WHERE Effective_Snapshot_Date >= '2015-07-01'
+    WHERE Effective_Snapshot_Date >= '2013-07-01'
       AND Effective_Snapshot_Date < '2024-07-01'
       AND Effective_Snapshot_Date <= '{end_sql}'
       AND MONTH(Effective_Snapshot_Date) = 7
@@ -248,7 +242,7 @@ lsoa_ons_history <- DBI::dbGetQuery(
     SELECT Area_Code AS LSOA_Code, Effective_Snapshot_Date AS Period,
       SUM(Size) AS Population
     FROM Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1
-    WHERE Effective_Snapshot_Date >= '2015-07-01'
+    WHERE Effective_Snapshot_Date >= '2013-07-01'
       AND Effective_Snapshot_Date <= '{end_sql}'
       AND MONTH(Effective_Snapshot_Date) = 7
       AND Area_Code LIKE 'E01%'

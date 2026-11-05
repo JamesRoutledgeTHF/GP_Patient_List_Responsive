@@ -95,9 +95,9 @@ class PracticeSourceTests(unittest.TestCase):
         chunks = re.findall(r"^```\{r\s+([^,}\s]+)[^\n]*\}\n(.*?)^```", REPORT, re.M | re.S)
         charts = [(name, code) for name, code in chunks
                   if "label_chart(" in code and name != "setup"]
-        self.assertEqual(len(charts), 24)
+        self.assertEqual(len(charts), 25)
         for name, code in charts:
-            source = "LSOA-level registrations" if name in {"imd-snapshot-chart", "region-snapshot-chart", "icb-snapshot-chart", "imd-quintile-population-time-series", "imd-quintile-difference-time-series"} else "Practice-level registrations"
+            source = "LSOA-level registrations" if name in {"region-imd-quintile-chart", "imd-snapshot-chart", "region-snapshot-chart", "icb-snapshot-chart", "imd-quintile-population-time-series", "imd-quintile-difference-time-series"} else "Practice-level registrations"
             self.assertIn('"' + source + '"', code, name)
             if "patients-per-gp" in name:
                 self.assertIn("practice-level workforce", code)
@@ -122,16 +122,19 @@ class PracticeSourceTests(unittest.TestCase):
             ("E01000001", "2015-07-01", "FEMALE", 90),
             ("E01000001", "2023-07-01", "FEMALE", 110),
             ("E01000001", "2024-07-01", "FEMALE", 999),
-            ("E01000001", "2014-07-01", "FEMALE", 999),
+            ("E01000001", "2012-07-01", "FEMALE", 999),
+            ("E01000001", "2013-07-01", "FEMALE", 70),
             ("E01000001", "2015-06-01", "FEMALE", 999),
             ("W01000001", "2015-07-01", "FEMALE", 999)])
         self.db.execute("INSERT INTO Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1 VALUES ('E01000001','2015-07-01','FEMALE',90)")
         self.db.execute("INSERT INTO Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1 VALUES ('E01000001','2015-07-01',80)")
+        self.db.execute("INSERT INTO Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1 VALUES ('E01000001','2013-07-01',60)")
         legacy_query = query_for("lsoa_registered_history_2011").replace(
             "MONTH(Effective_Snapshot_Date)",
             "CAST(strftime('%m', Effective_Snapshot_Date) AS INTEGER)")
         legacy_rows = self.db.execute(legacy_query).fetchall()
-        self.assertEqual(legacy_rows, [("E01000001", "2015-07-01", 90),
+        self.assertEqual(legacy_rows, [("E01000001", "2013-07-01", 70),
+                                      ("E01000001", "2015-07-01", 90),
                                       ("E01000001", "2023-07-01", 110)])
         query = query_for("lsoa_registered_history_2021")
         query = query.replace("MONTH(Effective_Snapshot_Date)",
@@ -144,9 +147,10 @@ class PracticeSourceTests(unittest.TestCase):
         self.assertIn("lsoa_registered_history_2011, lsoa_registered_history_2021", LOADER)
         ons_query = query_for("lsoa_ons_history").replace("MONTH(Effective_Snapshot_Date)",
             "CAST(strftime('%m', Effective_Snapshot_Date) AS INTEGER)")
-        self.assertIn("2015-07-01", ons_query)
+        self.assertIn("2013-07-01", ons_query)
         self.assertEqual(self.db.execute(ons_query).fetchall(),
-                         [("E01000001", "2015-07-01", 80),
+                         [("E01000001", "2013-07-01", 60),
+                          ("E01000001", "2015-07-01", 80),
                           ("E01000001", "2024-07-01", 130),
                           ("E01000002", "2024-07-01", 60)])
 

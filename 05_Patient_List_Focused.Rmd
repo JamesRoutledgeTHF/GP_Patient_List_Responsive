@@ -7,7 +7,7 @@ output:
     toc: true
     toc_float: true
 params:
-  start_date: "2015-07-01"
+  start_date: "2013-07-01"
   end_date: "2026-08-31"
   snapshot_date: "2024-07-01"
 ---
@@ -57,6 +57,11 @@ stopifnot(
   !is.na(snapshot_date),
   start_date <= end_date
 )
+
+history_year_breaks <- function(by = 1L) {
+  as.Date(paste0(seq(as.integer(format(start_date, "%Y")),
+                    as.integer(format(end_date, "%Y")), by = by), "-07-01"))
+}
 
 pct_difference <- function(registered, ons) {
   ifelse(
@@ -202,14 +207,12 @@ source("09_Get_LSOA_NHS_Region_Lookup.R")
 source("10_Get_Practice_Region_Lookup.R")
 DBI::dbDisconnect(con)
 source("12_Summarise_Registration_Coverage.R")
+source("15_Summarise_Region_IMD_Quintiles.R")
 source("14_Summarise_IMD_Trends.R")
 ```
 
 ```{r prepare-analysis-data, include=FALSE}
-age_levels <- c(
-  "0-9", "10-19", "20-29", "30-39", "40-49",
-  "50-59", "60-69", "70-79", "80-89", "90+"
-)
+age_levels <- c("0-19", "20-39", "40-59", "60+")
 
 national_time_series <- bind_rows(national_registered, national_ons)
 
@@ -229,7 +232,7 @@ sum_if_available <- function(x) {
 }
 
 age_time_series <- demographic_time_series %>%
-  group_by(Period, Age_Band) %>%
+  group_by(Period, Age_Band, Sex) %>%
   summarise(
     Registered = sum_if_available(Registered),
     ONS = sum_if_available(ONS),
@@ -520,6 +523,24 @@ IMD, regional and ICB population comparisons use residence-based LSOA registrati
 
 # National population over time
 
+All population time series request data from **mid-2013**, comparing ONS mid-year estimates with available registration snapshots. The table below shows the actual coverage returned by the warehouse. An earlier requested start does not create unavailable observations; the GP-FTE series also requires workforce data in the same July.
+
+```{r time-series-source-availability, results='asis'}
+available_history <- bind_rows(
+  national_time_series %>% select(Source, Period) %>% mutate(Series = "National population"),
+  lsoa_registered_history %>% select(Source, Period) %>% mutate(Series = "IMD history"),
+  lsoa_ons_history %>% select(Source, Period) %>% mutate(Series = "IMD history"),
+  qualified_gp_workforce %>% filter(format(Period, "%m") == "07") %>%
+    distinct(Period) %>% mutate(Source = "Practice GP workforce", Series = "July GP FTE")
+)
+available_history %>%
+  group_by(Series, Source) %>%
+  summarise(`First available snapshot` = format(min(Period), "%d %b %Y"),
+    `Last available snapshot` = format(max(Period), "%d %b %Y"),
+    `Available snapshots` = n_distinct(Period), .groups = "drop") %>%
+  report_table(caption = "Actual source coverage for time series requested from mid-2013")
+```
+
 ```{r national-population-time-series}
 label_chart(
 ggplot(
@@ -538,7 +559,7 @@ ggplot(
   )) +
   scale_x_date(
     limits = c(start_date, end_date),
-    date_breaks = "1 year",
+    breaks = history_year_breaks(),
     date_labels = "%Y"
   ) +
   scale_y_continuous(
@@ -546,7 +567,7 @@ ggplot(
   ) +
   labs(
     title = "England population: registered patients and ONS estimates",
-    subtitle = "July 2015 onwards; available source snapshots",
+    subtitle = "July 2013 onwards; available source snapshots",
     x = NULL,
     y = "Population",
     colour = NULL
@@ -567,7 +588,8 @@ ggplot(
 label_chart(
 ggplot(
   age_time_series,
-  aes(x = Period, y = Population, colour = Source, group = Source)
+  aes(x = Period, y = Population, colour = Source,
+      linetype = Sex, group = interaction(Source, Sex))
 ) +
   geom_vline(
     xintercept = as.numeric(as.Date("2021-07-01")),
@@ -587,14 +609,14 @@ ggplot(
     "Registered patients" = "#2166AC",
     "ONS population estimate" = "#B2182B"
   )) +
-  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  scale_x_date(limits = c(start_date, end_date), breaks = history_year_breaks(2L), date_labels = "%Y") +
   scale_y_continuous(labels = scales::label_number(scale = 1e-6, suffix = "m")) +
   labs(
-    title = "Population by age over time",
-    subtitle = "English GP registrations and England-only ONS estimates; matching ten-year age bands",
+    title = "Population by age and sex over time",
+    subtitle = "Ages 0–19, 20–39, 40–59 and 60+; female and male counts for each source",
     x = NULL,
     y = "Population",
-    colour = NULL,
+    colour = "Population source", linetype = "Sex",
     caption = "Dashed line: Census 2021 year; the cause of any turning point is not established by the chart."
   ) +
   theme_minimal(base_size = 11) +
@@ -628,7 +650,7 @@ ggplot(
     "Registered patients" = "#2166AC",
     "ONS population estimate" = "#B2182B"
   )) +
-  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  scale_x_date(limits = c(start_date, end_date), breaks = history_year_breaks(), date_labels = "%Y") +
   scale_y_continuous(labels = scales::label_number(scale = 1e-6, suffix = "m")) +
   labs(
     title = "Population by sex over time",
@@ -677,29 +699,44 @@ national_snapshot %>%
 
 ## Age
 
-```{r age-snapshot-chart, fig.height=6}
+```{r age-snapshot-chart, fig.height=8}
+age_snapshot_counts <- age_sex_snapshot %>%
+  select(Age_Band, Sex, Registered, ONS) %>%
+  pivot_longer(c(Registered, ONS), names_to = "Source", values_to = "Population") %>%
+  mutate(Source = recode(Source, Registered = "Registered patients",
+                         ONS = "ONS population estimate"))
 label_chart(
-comparison_bar(
-  age_snapshot,
-  Age_Band,
-  "Percentage difference by age",
-  format(snapshot_date, "%B %Y"),
-  "Age band"
-),
+  ggplot(age_snapshot_counts, aes(Age_Band, Population, fill = Source)) +
+    geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+    geom_text(aes(label = scales::comma(Population, accuracy = 1)),
+      position = position_dodge(width = 0.8), vjust = -0.35,
+      colour = "grey20", size = 3) +
+    facet_wrap(~ Sex, ncol = 1) +
+    scale_fill_manual(values = c("Registered patients" = "#2166AC",
+                                "ONS population estimate" = "#B2182B")) +
+    scale_y_continuous(labels = scales::label_number(scale = 1e-6, suffix = "m"),
+                       expand = expansion(mult = c(0, 0.12))) +
+    labs(title = "Registered patients and ONS residents by age and sex",
+      subtitle = format(snapshot_date, "%B %Y"),
+      x = "Age band", y = "Population", fill = "Population source") +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "top", panel.grid.minor = element_blank()),
   "Practice-level registrations"
 )
 ```
 
 ```{r age-snapshot-table, results='asis'}
-age_snapshot %>%
+age_sex_snapshot %>%
+  arrange(Sex, Age_Band) %>%
   transmute(
+    Sex,
     `Age band` = Age_Band,
     `Registered patients` = scales::comma(Registered),
     `ONS population` = scales::comma(ONS),
     `Raw difference` = scales::comma(Registered - ONS),
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
-  report_table(caption = "Population comparison by age (Practice-level registrations)")
+  report_table(caption = "Population counts by age and sex (Practice-level registrations)")
 ```
 
 ## Sex
@@ -820,7 +857,7 @@ imd_snapshot %>%
 
 The first chart compares ONS residents and registered patients in one figure, with a panel for each deprivation quintile. The second shows the percentage difference for each quintile: **100 × (registered patients − ONS residents) / ONS residents**. Positive values mean registrations exceed the resident estimate. Raw differences are also provided in the expandable table.
 
-Both charts request July observations from 2015 onwards. Registrations use 2011-LSOA releases through July 2023 and 2021-LSOA releases from July 2024. The July 2024 switch is marked, and consecutive available years are connected across it. Both geography and the registration data source changed, so movement across this marker should not be interpreted solely as population change. ONS observations are mid-year resident estimates, compared with July registration snapshots in the same calendar year; they are not monthly ONS estimates. Missing years remain unavailable and lines do not bridge gaps. One fixed IMD lookup pairs deciles 1–2 into quintile 1 (most deprived), through 9–10 into quintile 5 (least deprived). This classification is applied retrospectively, rather than using historical IMD rankings.
+Both charts request July observations from 2013 onwards. Registrations use 2011-LSOA releases through July 2023 and 2021-LSOA releases from July 2024. The July 2024 switch is marked, and consecutive available years are connected across it. Both geography and the registration data source changed, so movement across this marker should not be interpreted solely as population change. ONS observations are mid-year resident estimates, compared with July registration snapshots in the same calendar year; they are not monthly ONS estimates. Missing years remain unavailable and lines do not bridge gaps. One fixed IMD lookup pairs deciles 1–2 into quintile 1 (most deprived), through 9–10 into quintile 5 (least deprived). This classification is applied retrospectively, rather than using historical IMD rankings.
 
 ```{r imd-quintile-trend-prepare, include=FALSE}
 imd_trends <- summarise_imd_trends(
@@ -828,8 +865,8 @@ imd_trends <- summarise_imd_trends(
 )
 quintile_labels <- c("1 (Most deprived)", "2", "3", "4", "5 (Least deprived)")
 imd_last_year <- max(as.integer(format(imd_trends$trend$Period, "%Y")))
-imd_axis_dates <- as.Date(paste0(2015:imd_last_year, "-07-01"))
-imd_comparison <- expand.grid(Year = 2015:imd_last_year, Quintile = 1:5) %>%
+imd_axis_dates <- as.Date(paste0(2013:imd_last_year, "-07-01"))
+imd_comparison <- expand.grid(Year = 2013:imd_last_year, Quintile = 1:5) %>%
   left_join(compare_imd_trends(imd_trends$trend), by = c("Year", "Quintile")) %>%
   mutate(Period = as.Date(paste0(Year, "-07-01")),
     Quintile = factor(Quintile, levels = 1:5, labels = quintile_labels)) %>%
@@ -872,7 +909,7 @@ label_chart(
                  limits = range(imd_axis_dates)) +
     scale_y_continuous(labels = scales::label_number(scale = 1e-6, suffix = "m")) +
     labs(title = "ONS residents and registered patients by IMD quintile",
-      subtitle = "July observations from 2015; each panel is one quintile",
+      subtitle = "July observations from 2013; each panel is one quintile",
       x = NULL, y = "Population in common LSOA cohort", colour = NULL, linetype = NULL,
       caption = "Fixed IMD classification and common LSOA cohort. Missing years are not imputed or joined across; panel population scales vary.") +
     theme_minimal(base_size = 11) +
@@ -896,7 +933,7 @@ label_chart(
                  limits = range(imd_axis_dates)) +
     scale_y_continuous(labels = scales::label_number(suffix = "%")) +
     labs(title = "Registered patients versus ONS residents: difference by IMD quintile",
-      subtitle = "July observations from 2015; positive values indicate more registrations",
+      subtitle = "July observations from 2013; positive values indicate more registrations",
       x = NULL, y = "Difference relative to ONS (%)", colour = "IMD quintile",
       caption = "100 × (registered patients − ONS residents) / ONS residents. Fixed common LSOA cohort; differences require both sources in the same year. Missing years are not joined across.") +
     theme_minimal(base_size = 11) +
@@ -958,6 +995,70 @@ region_snapshot %>%
     `Percentage difference` = sprintf("%.1f%%", Pct_Difference)
   ) %>%
   report_table(caption = "Population comparison by NHS England region (LSOA-level registrations)")
+```
+
+## IMD quintiles within each NHS England region
+
+Each panel shows one April 2026 NHS England region. The bars compare registrations with ONS residents within the same deprivation quintile: **100 × (registered patients − ONS residents) / ONS residents**. Quintiles use national IMD deciles: 1–2 form quintile 1 (most deprived), through 9–10 forming quintile 5 (least deprived). Both sources follow residence LSOAs, with the same matched LSOAs in each bar. This snapshot comparison uses all eligible paired LSOAs at the selected date, independently of the restricted historical trend cohort. The coverage table identifies missing source records and invalid IMD; unavailable quintiles remain gaps.
+
+```{r region-imd-quintile-prepare, include=FALSE}
+region_imd <- summarise_region_imd_quintiles(
+  lsoa_registered_july %>% filter(Period == snapshot_date),
+  lsoa_ons_july %>% filter(Period == snapshot_date),
+  nhser_lookup, imd_lookup
+)
+region_imd_snapshot <- region_imd$comparison %>%
+  mutate(Quintile = factor(Quintile, levels = 1:5,
+    labels = c("1 (Most deprived)", "2", "3", "4", "5 (Least deprived)")))
+```
+
+```{r region-imd-quintile-chart, fig.height=11}
+label_chart(
+  ggplot(region_imd_snapshot, aes(Quintile, Pct_Difference)) +
+    geom_hline(yintercept = 0, colour = "grey55", linewidth = 0.4) +
+    geom_col(fill = "#2166AC", width = 0.7, na.rm = TRUE) +
+    geom_text(aes(label = ifelse(is.finite(Pct_Difference),
+      sprintf("%.1f%%", Pct_Difference), NA_character_),
+      vjust = ifelse(Pct_Difference >= 0, -0.35, 1.35)),
+      colour = "grey20", size = 3, na.rm = TRUE) +
+    facet_wrap(~ NHSER26NM, ncol = 2) +
+    scale_x_discrete(drop = FALSE, labels = c("1 (Most deprived)" = "1", "2" = "2",
+      "3" = "3", "4" = "4", "5 (Least deprived)" = "5")) +
+    scale_y_continuous(labels = function(x) paste0(x, "%"),
+                       expand = expansion(mult = c(0.15, 0.18))) +
+    labs(title = "Registered patients versus ONS residents by region and IMD quintile",
+      subtitle = paste(format(snapshot_date, "%B %Y"),
+        "| April 2026 NHS regions | Common percentage scale across panels"),
+      x = "IMD quintile (1 = most deprived; 5 = least deprived)",
+      y = "Difference relative to ONS (%)",
+      caption = "Each bar uses the same residence LSOAs for both sources. Missing pairs and invalid IMD are excluded; zero ONS denominators have no percentage.") +
+    theme_minimal(base_size = 11) +
+    theme(panel.grid.minor = element_blank(),
+          panel.grid.major.x = element_blank()),
+  "LSOA-level registrations",
+  "NHS regions: ONS April 2026 LSOA lookup; IMD classification: report's fixed IMD lookup."
+)
+```
+
+```{r region-imd-quintile-table, results='asis'}
+region_imd_snapshot %>%
+  transmute(`NHS region` = NHSER26NM, `IMD quintile` = Quintile,
+    `Paired LSOAs` = ifelse(is.na(LSOA_Count), "Unavailable", scales::comma(LSOA_Count)),
+    `Registered patients` = ifelse(is.na(Registered), "Unavailable", scales::comma(Registered)),
+    `ONS residents` = ifelse(is.na(ONS), "Unavailable", scales::comma(ONS)),
+    `Raw difference` = ifelse(is.na(Raw_Difference), "Unavailable", scales::comma(Raw_Difference)),
+    `Percentage difference relative to ONS` = ifelse(is.finite(Pct_Difference),
+      sprintf("%.1f%%", Pct_Difference), "Not defined")) %>%
+  report_table(caption = "NHS region and IMD quintile comparison (LSOA-level registrations)")
+```
+
+```{r region-imd-quintile-coverage-table, results='asis'}
+region_imd$coverage %>%
+  arrange(NHSER26NM, Coverage) %>%
+  transmute(`NHS region` = NHSER26NM, Coverage, `LSOAs` = LSOA_Count,
+    `Registered patients` = ifelse(is.na(Registered), "Unavailable", scales::comma(Registered)),
+    `ONS residents` = ifelse(is.na(ONS), "Unavailable", scales::comma(ONS))) %>%
+  report_table(caption = "Regional IMD coverage: English LSOAs only; missing source counts are unknown")
 ```
 
 # Integrated Care Boards
@@ -1214,7 +1315,7 @@ ggplot(
     "Registered patients" = "#2166AC",
     "ONS population estimate" = "#B2182B"
   )) +
-  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  scale_x_date(limits = c(start_date, end_date), breaks = history_year_breaks(), date_labels = "%Y") +
   scale_y_continuous(
     limits = c(0, NA),
     labels = scales::label_comma(),

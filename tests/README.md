@@ -20,6 +20,7 @@ These checks do not execute R, SQL Server or the full report.
 Run the existing base R checks in an R environment:
 
 ```bash
+Rscript tests/test_region_imd_quintiles.R
 Rscript tests/test_registration_coverage.R
 Rscript tests/test_payment_reduction.R
 Rscript tests/test_fixed_total_payment_rates.R
@@ -44,7 +45,7 @@ R and warehouse environment. Its layout follows
 `05_Patient_List_Focused_Clean.docx`: disparities, population trends, July
 snapshots, IMD, regions, ICBs, GP FTE, fixed-total payments, then payment loss.
 It retains the reference's 20 chart types and 16 comparison tables, and adds
-two deprivation trend charts, two funding loss-per-resident charts, one trend
+a region-faceted IMD quintile chart, two deprivation trend charts, two funding loss-per-resident charts, one trend
 coverage table and two funding-denominator tables.
 Word output uses that document's styles and page settings as its reference.
 The additional source-audit tables are omitted from this clean report; the
@@ -148,3 +149,22 @@ example, zero ONS population returning an undefined rate, and invariance of
 per-person rates when payment and population totals are scaled together.
 
 
+
+## November 2026 chart changes
+
+The focused report requests histories from July 2013. Actual first/last snapshots
+are disclosed in the report; unavailable registration or workforce years are not
+invented. Age queries and all focused age figures use 0–19, 20–39, 40–59 and 60+.
+The age time series separates sex by line type and population source by colour.
+The age snapshot compares both sources in separate sex panels; its table includes sex.
+Legacy report age bands and the published ten-year reference file remain unchanged.
+
+The regional IMD chart uses national quintiles within seven NHS-region panels,
+with a common percentage axis. Each bar sums both sources over the same eligible
+LSOAs at the selected snapshot; it does not use the restricted historical cohort.
+A coverage table separates invalid IMD and missing source records. Unavailable
+quintiles remain NA, and zero ONS denominators have no percentage.
+The base R fixture checks aggregation before percentage calculation, total
+reconciliation, missing pairs, non-English exclusions, zero denominators and
+invalid/duplicate keys. Python age fixtures check all integer boundaries for both
+the focused broad bands and the legacy ten-year bands.

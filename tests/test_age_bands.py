@@ -27,6 +27,13 @@ class AgeBandTests(unittest.TestCase):
                         "90+" if age == "95+" or age >= 90 else
                         f"{age // 10 * 10}-{age // 10 * 10 + 9}"
                     )
+                    if name == "08_Get_Focused_Patient_List_Data.R":
+                        expected = (
+                            None if age is None or age == -1 else
+                            "60+" if age == "95+" or age >= 60 else
+                            "0-19" if age <= 19 else
+                            "20-39" if age <= 39 else "40-59"
+                        )
                     result = connection.execute(
                         f"SELECT {numeric_case} FROM (SELECT ? AS Age)", (age,)
                     ).fetchone()[0]

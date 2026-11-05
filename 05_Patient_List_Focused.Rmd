@@ -25,7 +25,7 @@ knitr::opts_chunk$set(
 required_packages <- c(
   "DBI", "odbc", "dplyr", "tidyr", "ggplot2", "scales",
   "knitr", "httr", "jsonlite", "readr", "glue", "rlang", "tibble",
-  "tidyverse"
+  "tidyverse", "sf"
 )
 
 missing_packages <- required_packages[
@@ -208,6 +208,8 @@ source("10_Get_Practice_Region_Lookup.R")
 DBI::dbDisconnect(con)
 source("12_Summarise_Registration_Coverage.R")
 source("15_Summarise_Region_IMD_Quintiles.R")
+source("16_Classify_ICB_Map_Deciles.R")
+source("17_Get_ICB_Map_Boundaries.R")
 source("14_Summarise_IMD_Trends.R")
 ```
 
@@ -1081,11 +1083,71 @@ comparison_bar(
 )
 ```
 
+## ICB map: deciles of registration difference
+
+The map uses the same percentage difference as the ICB bar chart: **100 × (registered patients − ONS residents) / ONS residents**, using residence-based LSOA registrations. The colours divide ICBs into ten quantile groups, from **1 (lowest difference)** to **10 (highest difference)**. Darker red indicates a larger relative excess of registrations. These are deciles of this comparison, separate from IMD deprivation deciles. They describe relative differences and do not establish how many registrations are invalid. Equal values share a group, so ties can leave some groups empty; missing or undefined differences are grey. The groups are recalculated for the selected snapshot and are not fixed percentage-point bands.
+
+```{r icb-map-prepare, include=FALSE}
+if (anyDuplicated(icb_snapshot$ICB26CD)) {
+  stop("Duplicate ICB snapshot codes would duplicate map areas.")
+}
+icb_map_classification <- classify_icb_map_deciles(icb_snapshot$Pct_Difference)
+icb_map_values <- icb_snapshot %>%
+  mutate(Map_Decile = icb_map_classification$decile,
+         Map_Decile_Label = icb_map_classification$label)
+icb_boundaries <- load_icb_map_boundaries(nhser_lookup$ICB26CD)
+if (nrow(anti_join(icb_map_values, sf::st_drop_geometry(icb_boundaries),
+                  by = "ICB26CD"))) {
+  stop("An ICB comparison has no April 2026 map boundary.")
+}
+icb_map <- icb_boundaries %>%
+  select(ICB26CD) %>%
+  left_join(icb_map_values, by = "ICB26CD")
+icb_map$Map_Decile_Label <- factor(
+  ifelse(is.na(icb_map$Map_Decile_Label), "No comparable data",
+         as.character(icb_map$Map_Decile_Label)),
+  levels = levels(icb_map_classification$label))
+icb_map_colours <- setNames(
+  c("#FFFFCC", "#FFEDA0", "#FED976", "#FEB24C", "#FD8D3C",
+    "#FC6B2C", "#F03B20", "#D9231C", "#BD0026", "#800026", "#BDBDBD"),
+  levels(icb_map_classification$label))
+```
+
+```{r icb-decile-map, fig.width=9, fig.height=10}
+label_chart(
+  ggplot(icb_map) +
+    geom_sf(aes(fill = Map_Decile_Label), colour = "white", linewidth = 0.25) +
+    scale_fill_manual(values = icb_map_colours, drop = FALSE,
+                      name = "Registration difference decile") +
+    coord_sf(crs = sf::st_crs(27700), datum = NA) +
+    labs(title = "Registered patients versus ONS residents by ICB",
+      subtitle = paste(format(snapshot_date, "%B %Y"),
+        "| April 2026 ICB boundaries | Darker = higher percentage difference"),
+      caption = "Deciles rank the signed percentage difference relative to ONS; they are not IMD deciles.\nBoundaries: ONS April 2026 BSC, 200 m generalisation. Contains OS and ONS data © Crown copyright.") +
+    theme_void(base_size = 11) +
+    theme(legend.position = "right", plot.title = element_text(face = "bold"),
+          plot.subtitle = element_text(margin = margin(b = 8)),
+          plot.margin = margin(8, 8, 8, 8)),
+  "LSOA-level registrations"
+)
+```
+
+```{r icb-map-decile-key, results='asis'}
+icb_map_classification$key %>%
+  transmute(`Map decile` = Decile, `ICBs` = ICBs,
+    `Lowest observed difference (%)` = ifelse(is.na(Minimum_Pct), "Empty group",
+      scales::number(Minimum_Pct, accuracy = 0.01)),
+    `Highest observed difference (%)` = ifelse(is.na(Maximum_Pct), "Empty group",
+      scales::number(Maximum_Pct, accuracy = 0.01))) %>%
+  report_table(caption = "ICB map deciles: observed percentage ranges and number of ICBs")
+```
+
 ```{r icb-snapshot-table, results='asis'}
-icb_snapshot %>%
+icb_map_values %>%
   arrange(desc(Pct_Difference)) %>%
   transmute(
     ICB = ICB26NM,
+    `Map decile` = ifelse(is.na(Map_Decile), "No comparable data", as.character(Map_Decile)),
     `Registered patients` = scales::comma(Registered),
     `ONS population` = scales::comma(ONS),
     `Raw difference` = scales::comma(Raw_Difference),

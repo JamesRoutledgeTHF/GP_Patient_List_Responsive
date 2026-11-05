@@ -168,3 +168,22 @@ The base R fixture checks aggregation before percentage calculation, total
 reconciliation, missing pairs, non-English exclusions, zero denominators and
 invalid/duplicate keys. Python age fixtures check all integer boundaries for both
 the focused broad bands and the legacy ten-year bands.
+
+## ICB decile map
+
+The focused report restores an ICB map using the official ONS April 2026 BSC
+(200 m coast-clipped) boundary service. Install the additional `sf` dependency.
+The downloaded layer is validated against all 36 ICB codes in the report lookup
+and cached in `data/ICB_April2026_BSC.geojson`; an invalid cache is refreshed.
+No live registration or ONS population values are downloaded by the map loader.
+
+Colours show deciles of the signed percentage difference relative to ONS from
+the residence-based ICB snapshot. Type-7 quantile thresholds are calculated from
+finite ICB percentages. Values on thresholds fall in the lower group; identical
+values always share a group. Ties may leave empty deciles, which the key table
+identifies. Missing/undefined values are grey. The existing ICB table includes
+each area's map decile, alongside the actual percentages and counts.
+
+Run `Rscript tests/test_icb_map_deciles.R` to check the classification, ties,
+negative differences, nonfinite values, all-equal data, permutation invariance
+and invalid input. This fixture requires only base R, not sf or the warehouse.

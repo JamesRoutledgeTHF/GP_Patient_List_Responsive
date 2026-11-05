@@ -95,9 +95,9 @@ class PracticeSourceTests(unittest.TestCase):
         chunks = re.findall(r"^```\{r\s+([^,}\s]+)[^\n]*\}\n(.*?)^```", REPORT, re.M | re.S)
         charts = [(name, code) for name, code in chunks
                   if "label_chart(" in code and name != "setup"]
-        self.assertEqual(len(charts), 25)
+        self.assertEqual(len(charts), 26)
         for name, code in charts:
-            source = "LSOA-level registrations" if name in {"region-imd-quintile-chart", "imd-snapshot-chart", "region-snapshot-chart", "icb-snapshot-chart", "imd-quintile-population-time-series", "imd-quintile-difference-time-series"} else "Practice-level registrations"
+            source = "LSOA-level registrations" if name in {"icb-decile-map", "region-imd-quintile-chart", "imd-snapshot-chart", "region-snapshot-chart", "icb-snapshot-chart", "imd-quintile-population-time-series", "imd-quintile-difference-time-series"} else "Practice-level registrations"
             self.assertIn('"' + source + '"', code, name)
             if "patients-per-gp" in name:
                 self.assertIn("practice-level workforce", code)

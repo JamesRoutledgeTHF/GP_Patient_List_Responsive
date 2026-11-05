@@ -10,6 +10,7 @@ params:
   start_date: "2013-07-01"
   end_date: "2026-08-31"
   snapshot_date: "2024-07-01"
+  chart_data_dir: "outputs/chart_data"
 ---
 
 ```{r setup, include=FALSE}
@@ -155,8 +156,22 @@ report_table <- function(x, caption = NULL, ...) {
   ))
 }
 
+source("18_Export_Chart_Data.R")
+chart_csv <- new_chart_csv_exporter(params$chart_data_dir)
+
 # Source labels are embedded in figures, so exported charts retain provenance.
 label_chart <- function(plot, source, inputs = NULL) {
+  chart_id <- knitr::opts_current$get("label")
+  chart_rows <- plot$data
+  if (inherits(chart_rows, "sf")) chart_rows <- sf::st_drop_geometry(chart_rows)
+  payment_date <- if (grepl("payment", chart_id) &&
+                      exists("payment_snapshot_date", inherits = TRUE)) {
+    as.Date(payment_snapshot_date)
+  } else as.Date(NA)
+  chart_csv$write(chart_id, chart_rows, source,
+    inputs = if (is.null(inputs)) "" else inputs,
+    reference_date = snapshot_date, payment_date = payment_date,
+    measure = if (is.null(plot$labels$y)) "" else as.character(plot$labels$y))
   source_text <- paste0("Registration data: ", source,
                         ". ONS: English LSOA population estimates.")
   if (!is.null(inputs)) source_text <- paste(source_text, inputs)
@@ -210,6 +225,7 @@ source("12_Summarise_Registration_Coverage.R")
 source("15_Summarise_Region_IMD_Quintiles.R")
 source("16_Classify_ICB_Map_Deciles.R")
 source("17_Get_ICB_Map_Boundaries.R")
+source("19_Prepare_ICB_Rate_Maps.R")
 ```
 
 ```{r prepare-analysis-data, include=FALSE}
@@ -1463,6 +1479,51 @@ ggplot(
 )
 ```
 
+### Map of the difference
+
+Registered patients per GP FTE minus ONS residents per GP FTE. Positive differences mean more registered patients than ONS residents per unit of the same partner-and-salaried GP FTE. The colours are ten deciles of this signed difference in people per GP FTE, rather than the two rates separately. Each map has its own decile thresholds; grey indicates unavailable inputs.
+
+```{r patients-per-gp-icb-map-prepare, include=FALSE}
+patients_per_gp_icb_map_values <- prepare_icb_difference_map(
+  patients_per_gp_icb_snapshot, icb_boundaries$ICB26CD,
+  "Registered_Per_GP_FTE", "ONS_Per_GP_FTE",
+  direction = "registered-minus-ons"
+)
+patients_per_gp_icb_map_values$data$Difference_Unit <- "people per GP FTE"
+patients_per_gp_icb_map <- icb_boundaries %>%
+  select(ICB26CD, ICB26NM) %>%
+  left_join(patients_per_gp_icb_map_values$data, by = c("ICB26CD" = "ICB_Key"))
+```
+
+```{r patients-per-gp-icb-difference-map, fig.width=9, fig.height=10}
+label_chart(
+  ggplot(patients_per_gp_icb_map) +
+    geom_sf(aes(fill = Map_Decile_Label), colour = "white", linewidth = 0.25) +
+    scale_fill_manual(values = icb_map_colours, drop = FALSE,
+      name = "Difference decile\n(people per GP FTE)") +
+    coord_sf(crs = sf::st_crs(27700), datum = NA) +
+    labs(title = "Difference in people per GP FTE by ICB",
+      subtitle = format(snapshot_date, "%B %Y"),
+      caption = "Registered patients per GP FTE minus ONS residents per GP FTE.\nPositive differences mean more registered patients than ONS residents per unit of the same partner-and-salaried GP FTE.\nONS April 2026 ICB boundaries. Darker colours indicate higher signed differences; identical values stay together.") +
+    theme_void(base_size = 11) +
+    theme(legend.position = "right", plot.title = element_text(face = "bold"),
+          plot.subtitle = element_text(margin = margin(b = 8)),
+          plot.margin = margin(8, 8, 8, 8)),
+  "Practice-level registrations",
+  "GP FTE: practice-level workforce data; aggregated to April 2026 ICBs. Practice registrations follow practice assignment; ONS populations follow residence."
+)
+```
+
+```{r patients-per-gp-icb-map-decile-key, results='asis'}
+patients_per_gp_icb_map_values$key %>%
+  transmute(`Map decile` = Decile, ICBs,
+    `Lowest observed difference` = ifelse(is.na(Minimum_Difference), "Empty group",
+      scales::number(Minimum_Difference, accuracy = 0.01)),
+    `Highest observed difference` = ifelse(is.na(Maximum_Difference), "Empty group",
+      scales::number(Maximum_Difference, accuracy = 0.01))) %>%
+  report_table(caption = "Decile ranges in people per GP FTE")
+```
+
 ```{r patients-per-gp-icb-table, results='asis'}
 patients_per_gp_icb_snapshot %>%
   arrange(desc(Registered_Per_GP_FTE)) %>%
@@ -1703,8 +1764,8 @@ For each geography, the full annual payment total is divided separately by the p
 ```{r national-fixed-total-payment-chart, fig.width=8, fig.height=5}
 label_chart(
 national_fixed_payment_rates %>%
-  select(Payment_Per_Registered, Payment_Per_ONS) %>%
-  pivot_longer(everything(), names_to = "Denominator", values_to = "Average_Payment") %>%
+  pivot_longer(c(Payment_Per_Registered, Payment_Per_ONS),
+               names_to = "Denominator", values_to = "Average_Payment") %>%
   mutate(Denominator = factor(
     Denominator, levels = c("Payment_Per_Registered", "Payment_Per_ONS"),
     labels = c("Registered population", "ONS population")
@@ -1763,6 +1824,51 @@ fixed_payment_rate_chart(icb_fixed_payment_rates, "ICB",
   "Practice-level registrations",
   "Payments: practice-level annual payment data; aggregated to the chart geography."
 )
+```
+
+### Map of the difference
+
+ONS-based payment per resident minus payment per registered patient; total payments held fixed. Positive differences mean a higher average when the same annual payment total is divided by ONS residents. Negative differences indicate a lower ONS-based average. The colours are ten deciles of this signed difference in GBP per person per year, rather than the two rates separately. Each map has its own decile thresholds; grey indicates unavailable inputs.
+
+```{r icb-payment-per-capita-map-prepare, include=FALSE}
+icb_payment_per_capita_map_values <- prepare_icb_difference_map(
+  icb_fixed_payment_rates, icb_boundaries$ICB26CD,
+  "Payment_Per_Registered", "Payment_Per_ONS",
+  direction = "ons-minus-registered"
+)
+icb_payment_per_capita_map_values$data$Difference_Unit <- "GBP per person per year"
+icb_payment_per_capita_map <- icb_boundaries %>%
+  select(ICB26CD, ICB26NM) %>%
+  left_join(icb_payment_per_capita_map_values$data, by = c("ICB26CD" = "ICB_Key"))
+```
+
+```{r icb-payment-per-capita-difference-map, fig.width=9, fig.height=10}
+label_chart(
+  ggplot(icb_payment_per_capita_map) +
+    geom_sf(aes(fill = Map_Decile_Label), colour = "white", linewidth = 0.25) +
+    scale_fill_manual(values = icb_map_colours, drop = FALSE,
+      name = "Difference decile\n(GBP per person per year)") +
+    coord_sf(crs = sf::st_crs(27700), datum = NA) +
+    labs(title = "Difference in average annual payment per person by ICB",
+      subtitle = paste(format(snapshot_date, "%B %Y"), "| Payment snapshot:", format(payment_snapshot_date, "%d %b %Y")),
+      caption = "ONS-based payment per resident minus payment per registered patient; total payments held fixed.\nPositive differences mean a higher average when the same annual payment total is divided by ONS residents. Negative differences indicate a lower ONS-based average.\nONS April 2026 ICB boundaries. Darker colours indicate higher signed differences; identical values stay together.") +
+    theme_void(base_size = 11) +
+    theme(legend.position = "right", plot.title = element_text(face = "bold"),
+          plot.subtitle = element_text(margin = margin(b = 8)),
+          plot.margin = margin(8, 8, 8, 8)),
+  "Practice-level registrations",
+  "Payments: practice-level annual payment data; aggregated to April 2026 ICBs. Practice registrations follow practice assignment; ONS populations follow residence."
+)
+```
+
+```{r icb-payment-per-capita-map-decile-key, results='asis'}
+icb_payment_per_capita_map_values$key %>%
+  transmute(`Map decile` = Decile, ICBs,
+    `Lowest observed difference` = ifelse(is.na(Minimum_Difference), "Empty group",
+      scales::number(Minimum_Difference, accuracy = 0.01)),
+    `Highest observed difference` = ifelse(is.na(Maximum_Difference), "Empty group",
+      scales::number(Maximum_Difference, accuracy = 0.01))) %>%
+  report_table(caption = "Decile ranges in GBP per person per year")
 ```
 
 ```{r icb-fixed-total-payment-table, results='asis'}
@@ -1847,3 +1953,38 @@ payment_loss_table(icb_payment_scenario, "ICB", "ICB payment loss scenarios")
 ```
 
 
+
+# Chart data files
+
+Every chart's underlying data are saved as an unrounded CSV in `r params$chart_data_dir` when this report renders. Filenames match the chart identifiers. Map CSVs contain ICB codes, both source rates, the difference, decile and raw inputs; geometry is omitted. Dates use ISO format and unavailable values are blank. A manifest links each CSV to its chart and records sources and row counts. The payment map holds each ICB's annual payment total fixed.
+
+```{r chart-data-manifest, include=FALSE}
+chart_csv$finish(c(
+  "national-population-time-series",
+  "age-time-series",
+  "sex-time-series",
+  "national-snapshot-chart",
+  "age-snapshot-chart",
+  "sex-snapshot-chart",
+  "age-sex-snapshot-chart",
+  "imd-snapshot-chart",
+  "region-snapshot-chart",
+  "region-imd-quintile-chart",
+  "icb-snapshot-chart",
+  "icb-decile-map",
+  "patients-per-gp-july-2024-bar",
+  "patients-per-gp-july-time-series",
+  "patients-per-gp-region-dumbbell",
+  "patients-per-gp-icb-dumbbell",
+  "patients-per-gp-icb-difference-map",
+  "national-fixed-total-payment-chart",
+  "regional-fixed-total-payment-chart",
+  "icb-fixed-total-payment-chart",
+  "icb-payment-per-capita-difference-map",
+  "national-payment-loss-chart",
+  "regional-payment-loss-chart",
+  "regional-payment-loss-per-resident-chart",
+  "icb-payment-loss-chart",
+  "icb-payment-loss-per-resident-chart"
+))
+```

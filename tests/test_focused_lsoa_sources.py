@@ -94,7 +94,7 @@ class PracticeSourceTests(unittest.TestCase):
         chunks = re.findall(r"^```\{r\s+([^,}\s]+)[^\n]*\}\n(.*?)^```", REPORT, re.M | re.S)
         charts = [(name, code) for name, code in chunks
                   if "label_chart(" in code and name != "setup"]
-        self.assertEqual(len(charts), 24)
+        self.assertEqual(len(charts), 26)
         for name, code in charts:
             source = "LSOA-level registrations" if name in {"icb-decile-map", "region-imd-quintile-chart", "imd-snapshot-chart", "region-snapshot-chart", "icb-snapshot-chart"} else "Practice-level registrations"
             self.assertIn('"' + source + '"', code, name)
@@ -110,6 +110,23 @@ class PracticeSourceTests(unittest.TestCase):
         self.assertIn('colour = "grey20"', REPORT)
         self.assertNotIn("select(-Registered, -Raw_Difference, -Pct_Difference)", REPORT)
 
+
+    def test_every_chart_has_a_csv_manifest_entry(self):
+        chunks = dict(re.findall(
+            r"^```\{r\s+([^,}\s]+)[^\n]*\}\n(.*?)^```", REPORT, re.M | re.S))
+        expected = {name for name, code in chunks.items()
+                    if "label_chart(" in code and name != "setup"}
+        listed = re.findall(r'"([a-z][a-z0-9-]*)"', chunks["chart-data-manifest"])
+        self.assertEqual(set(listed), expected)
+        self.assertEqual(len(listed), len(expected))
+        self.assertIn('chart_csv$write(chart_id, chart_rows, source', chunks["setup"])
+        self.assertIn('knitr::opts_current$get("label")', chunks["setup"])
+        self.assertIn('sf::st_drop_geometry(chart_rows)', chunks["setup"])
+        self.assertIn('chart_data_dir: "outputs/chart_data"', REPORT)
+        self.assertIn('"registered-minus-ons"',
+                      chunks["patients-per-gp-icb-map-prepare"])
+        self.assertIn('"ons-minus-registered"',
+                      chunks["icb-payment-per-capita-map-prepare"])
 
 
 if __name__ == "__main__":

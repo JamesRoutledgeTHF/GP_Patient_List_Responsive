@@ -44,9 +44,10 @@ Render `05_Patient_List_Focused.Rmd` with `rmarkdown::render()` in the existing
 R and warehouse environment. Its layout follows
 `05_Patient_List_Focused_Clean.docx`: disparities, population trends, July
 snapshots, IMD, regions, ICBs, GP FTE, fixed-total payments, then payment loss.
-It retains the reference's 20 chart types and 16 comparison tables, and adds
-a region-faceted IMD quintile chart, two deprivation trend charts, two funding loss-per-resident charts, one trend
-coverage table and two funding-denominator tables.
+The report contains 24 charts, including the regional IMD quintile snapshot,
+the ICB decile map and the two funding loss-per-resident charts. The removed
+IMD quintile time-series charts and their comparison/coverage tables are no
+longer rendered.
 Word output uses that document's styles and page settings as its reference.
 The additional source-audit tables are omitted from this clean report; the
 coverage helper still provides the detailed audit for separate analysis.
@@ -102,40 +103,7 @@ Duplicate practice
 geography keys and missing snapshot sources stop rendering.
 
 
-# Deprivation trends and population-normalised funding losses
-
-Run `Rscript tests/test_imd_trends.R` to test the fixed-IMD balanced cohort,
-decile-to-quintile grouping, count reconciliation, incomplete snapshots,
-invalid IMD, duplicate records and invalid populations. Comparison tests cover
-same-year July date alignment, missing source-years, zero denominators, signs,
-percentage scaling and ambiguous duplicate snapshots. These are base R
-fixtures; they require R but no warehouse connection.
-
-`14_Summarise_IMD_Trends.R` groups deciles 1–2 into quintile 1 (most deprived)
-through 9–10 into quintile 5 (least deprived). It retains English LSOAs present
-in every available July snapshot of both registration and ONS histories with
-a valid decile in the fixed latest warehouse IMD lookup. Both charts therefore
-use the same constant LSOA set, and show cohort population counts, not full
-England totals. The coverage table discloses excluded populations for each
-source/date. Missing years are neither imputed nor connected by the plot.
-The warehouse IMD snapshot date is shown; its edition is not inferred from it.
-History queries begin at July 2015 independently of the rest of the report's
-start date. Registrations use the legacy 2011-LSOA table before July 2024 and
-the 2021-LSOA table from July 2024, with no overlap. The loader resolves exactly
-one supported legacy table name from database metadata and stops if none or
-multiple names are present. Actual historical availability must be checked in
-the warehouse. Only codes shared across the histories and linked to the fixed
-IMD lookup are retained; split/merged codes are excluded, not apportioned.
-This common-code cohort does not constitute a full geography conversion.
-Both figures mark July 2024 to disclose the geography and registration-source
-change, while connecting consecutive available years across the transition.
-Missing years still break the lines in both the population and difference charts.
-The first chart combines both sources in panels by quintile; the
-second compares quintiles using 100 × (registered − ONS) / ONS. Raw differences
-and source counts are included in an expandable table. Comparisons match the
-calendar year, permit different July snapshot days, and require both sources.
-Unavailable years stay missing rather than becoming zero, and zero ONS counts
-produce an undefined percentage.
+# Population-normalised funding losses
 
 The primary funding comparison is annual modelled loss divided by ONS residents
 in each region or April 2026 ICB. Tables also give the practice registered count
@@ -161,10 +129,35 @@ Legacy report age bands and the published ten-year reference file remain unchang
 
 The regional IMD chart uses national quintiles within seven NHS-region panels,
 with a common percentage axis. Each bar sums both sources over the same eligible
-LSOAs at the selected snapshot; it does not use the restricted historical cohort.
+LSOAs at the selected snapshot.
 A coverage table separates invalid IMD and missing source records. Unavailable
 quintiles remain NA, and zero ONS denominators have no percentage.
 The base R fixture checks aggregation before percentage calculation, total
 reconciliation, missing pairs, non-English exclusions, zero denominators and
 invalid/duplicate keys. Python age fixtures check all integer boundaries for both
 the focused broad bands and the legacy ten-year bands.
+
+## ICB decile map
+
+The focused report restores an ICB map using the official ONS April 2026 BSC
+(200 m coast-clipped) boundary service. Install the additional `sf` dependency.
+The downloaded layer is validated against all 36 ICB codes in the report lookup
+and cached in `data/ICB_April2026_BSC.geojson`; an invalid cache is refreshed.
+No live registration or ONS population values are downloaded by the map loader.
+
+Colours show deciles of the signed percentage difference relative to ONS from
+the residence-based ICB snapshot. Type-7 quantile thresholds are calculated from
+finite ICB percentages. Values on thresholds fall in the lower group; identical
+values always share a group. Ties may leave empty deciles, which the key table
+identifies. Missing/undefined values are grey. The existing ICB table includes
+each area's map decile, alongside the actual percentages and counts.
+
+Run `Rscript tests/test_icb_map_deciles.R` to check the classification, ties,
+negative differences, nonfinite values, all-equal data, permutation invariance
+and invalid input. This fixture requires only base R, not sf or the warehouse.
+
+The focused report no longer loads historical LSOA registration/ONS extracts,
+resolves a legacy 2011-LSOA registration table, or sources the IMD trend helper.
+The national, age/sex and GP-FTE histories continue to request data from 2013.
+The standalone `14_Summarise_IMD_Trends.R` helper and its R fixtures remain for
+older callers; they are not used by the focused report.

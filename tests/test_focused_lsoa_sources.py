@@ -17,7 +17,6 @@ def query_for(name):
     pattern = r'^' + name + r' <- DBI::dbGetQuery\(\s*con,\s*glue::glue\("(.*?)"\)'
     query = re.search(pattern, LOADER, re.S | re.M).group(1)
     for variable, value in (("start_sql", "2024-01-01"),
-                            ("lsoa_2011_table", "No_Of_Patients_Regd_At_GP_Practice_LSOA_Level1"),
                             ("end_sql", "2024-12-31"),
                             ("snapshot_sql", "2024-07-01")):
         query = query.replace("{" + variable + "}", value)
@@ -95,9 +94,9 @@ class PracticeSourceTests(unittest.TestCase):
         chunks = re.findall(r"^```\{r\s+([^,}\s]+)[^\n]*\}\n(.*?)^```", REPORT, re.M | re.S)
         charts = [(name, code) for name, code in chunks
                   if "label_chart(" in code and name != "setup"]
-        self.assertEqual(len(charts), 25)
+        self.assertEqual(len(charts), 24)
         for name, code in charts:
-            source = "LSOA-level registrations" if name in {"region-imd-quintile-chart", "imd-snapshot-chart", "region-snapshot-chart", "icb-snapshot-chart", "imd-quintile-population-time-series", "imd-quintile-difference-time-series"} else "Practice-level registrations"
+            source = "LSOA-level registrations" if name in {"icb-decile-map", "region-imd-quintile-chart", "imd-snapshot-chart", "region-snapshot-chart", "icb-snapshot-chart"} else "Practice-level registrations"
             self.assertIn('"' + source + '"', code, name)
             if "patients-per-gp" in name:
                 self.assertIn("practice-level workforce", code)
@@ -110,49 +109,7 @@ class PracticeSourceTests(unittest.TestCase):
         self.assertNotRegex(REPORT, r'label = payment_currency\([^\n]+,\s*\n\s*colour = "(?:Registered|ONS)')
         self.assertIn('colour = "grey20"', REPORT)
         self.assertNotIn("select(-Registered, -Raw_Difference, -Pct_Difference)", REPORT)
-        self.assertIn("facet_wrap(~Quintile", REPORT)
-        self.assertIn("compare_imd_trends(imd_trends$trend)", REPORT)
-        self.assertIn("filter(is.finite(Pct_Difference))", REPORT)
-        self.assertIn("July population counts and differences by IMD quintile", REPORT)
 
-    def test_july_history_queries_filter_residence_and_dates(self):
-        legacy = "Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_Level1"
-        self.db.execute(f"CREATE TABLE {legacy} (LSOA_Code TEXT, Effective_Snapshot_Date TEXT, Sex TEXT, Size REAL)")
-        self.db.executemany(f"INSERT INTO {legacy} VALUES (?,?,?,?)", [
-            ("E01000001", "2015-07-01", "FEMALE", 90),
-            ("E01000001", "2023-07-01", "FEMALE", 110),
-            ("E01000001", "2024-07-01", "FEMALE", 999),
-            ("E01000001", "2012-07-01", "FEMALE", 999),
-            ("E01000001", "2013-07-01", "FEMALE", 70),
-            ("E01000001", "2015-06-01", "FEMALE", 999),
-            ("W01000001", "2015-07-01", "FEMALE", 999)])
-        self.db.execute("INSERT INTO Demography.No_Of_Patients_Regd_At_GP_Practice_LSOA_2021_Level1 VALUES ('E01000001','2015-07-01','FEMALE',90)")
-        self.db.execute("INSERT INTO Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1 VALUES ('E01000001','2015-07-01',80)")
-        self.db.execute("INSERT INTO Demography.ONS_Population_Estimates_For_LSOAs_By_Year_Of_Age1 VALUES ('E01000001','2013-07-01',60)")
-        legacy_query = query_for("lsoa_registered_history_2011").replace(
-            "MONTH(Effective_Snapshot_Date)",
-            "CAST(strftime('%m', Effective_Snapshot_Date) AS INTEGER)")
-        legacy_rows = self.db.execute(legacy_query).fetchall()
-        self.assertEqual(legacy_rows, [("E01000001", "2013-07-01", 70),
-                                      ("E01000001", "2015-07-01", 90),
-                                      ("E01000001", "2023-07-01", 110)])
-        query = query_for("lsoa_registered_history_2021")
-        query = query.replace("MONTH(Effective_Snapshot_Date)",
-                              "CAST(strftime('%m', Effective_Snapshot_Date) AS INTEGER)")
-        self.assertEqual(self.db.execute(query).fetchall(),
-                         [("E01000001", "2024-07-01", 150),
-                          ("E01000002", "2024-07-01", 50)])
-        combined = legacy_rows + self.db.execute(query).fetchall()
-        self.assertEqual(len(combined), len(set((code, date) for code, date, _ in combined)))
-        self.assertIn("lsoa_registered_history_2011, lsoa_registered_history_2021", LOADER)
-        ons_query = query_for("lsoa_ons_history").replace("MONTH(Effective_Snapshot_Date)",
-            "CAST(strftime('%m', Effective_Snapshot_Date) AS INTEGER)")
-        self.assertIn("2013-07-01", ons_query)
-        self.assertEqual(self.db.execute(ons_query).fetchall(),
-                         [("E01000001", "2013-07-01", 60),
-                          ("E01000001", "2015-07-01", 80),
-                          ("E01000001", "2024-07-01", 130),
-                          ("E01000002", "2024-07-01", 60)])
 
 
 if __name__ == "__main__":

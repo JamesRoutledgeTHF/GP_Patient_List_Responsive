@@ -196,3 +196,28 @@ Run `Rscript tests/test_chart_csv_exports.R` and
 `Rscript tests/test_icb_difference_maps.R` for numeric/CSV round trips,
 missing values, manifest coverage, stale-file handling, signed differences,
 retained denominators and geography validation. These fixtures require only base R.
+
+## Payment components and chart styling
+
+All national, regional and ICB funding scenarios use Global Sum, MPIG
+Correction Factor, Balance of PMS Expenditure, Out of Area in Hours Urgent
+Care and GP Extended Hours Access from one latest payment snapshot. The five
+headers were verified against the NHS England 2024/25 practice CSV. Matching
+ignores case and whitespace; a missing category at the selected snapshot
+fails with its name. Signed adjustments are retained. Published aggregate
+payments and recorded PCN Participation are excluded from the calculation.
+
+The model adds PCN Participation at £41.578 per baseline registered patient.
+It is applied once before the selected total is divided by either registered
+patients or ONS residents, or used for the proportional loss scenario.
+Selected published payments and the modelled addition reconcile to England,
+including amounts without a local assignment. The England component table
+and funding CSVs expose the breakdown and rate separately.
+
+The age time-series panels begin at zero. Age and sex percentage labels show
+the signed raw difference in brackets. All three maps use the same discrete
+blue-to-red palette, from lowest to highest differences, with missing values
+grey. Deciles still rank differences and do not identify the zero point.
+
+Run `Rscript tests/test_payment_components.R` for the selection, signed
+adjustments, custom PCN rate, aggregation and both funding models.

@@ -620,15 +620,16 @@ ggplot(
       filter(Source == "ONS population estimate", !is.na(Population)),
     size = 1.3
   ) +
-  facet_wrap(~ Age_Band, scales = "free_y", ncol = 2) +
+  facet_wrap(~ Age_Band, ncol = 2) +
   scale_colour_manual(values = c(
     "Registered patients" = "#2166AC",
     "ONS population estimate" = "#B2182B"
   )) +
   scale_x_date(limits = c(start_date, end_date), breaks = history_year_breaks(2L), date_labels = "%Y") +
-  scale_y_continuous(limits = c(0, NA),
+  scale_y_continuous(breaks = seq(0, 9e6, by = 1e6),
     labels = scales::label_number(scale = 1e-6, suffix = "m"),
-    expand = expansion(mult = c(0, 0.05))) +
+    expand = expansion(mult = 0)) +
+  coord_cartesian(ylim = c(0, 9e6)) +
   labs(
     title = "Population by age and sex over time",
     subtitle = "Ages 0–19, 20–39, 40–59 and 60+; female and male counts for each source",

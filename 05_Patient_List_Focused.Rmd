@@ -626,10 +626,10 @@ ggplot(
     "ONS population estimate" = "#B2182B"
   )) +
   scale_x_date(limits = c(start_date, end_date), breaks = history_year_breaks(2L), date_labels = "%Y") +
-  scale_y_continuous(breaks = seq(0, 9e6, by = 1e6),
+  scale_y_continuous(breaks = seq(0, 10e6, by = 1e6),
     labels = scales::label_number(scale = 1e-6, suffix = "m"),
     expand = expansion(mult = 0)) +
-  coord_cartesian(ylim = c(0, 9e6)) +
+  coord_cartesian(ylim = c(0, 10e6)) +
   labs(
     title = "Population by age and sex over time",
     subtitle = "Ages 0–19, 20–39, 40–59 and 60+; female and male counts for each source",

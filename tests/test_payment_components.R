@@ -44,4 +44,27 @@ invalid <- finance
 invalid$Metric_Value[1] <- NA_real_
 must_fail(select_payment_components(invalid), "invalid amounts")
 must_fail(add_pcn_participation(local, -1), "nonnegative")
-cat("Selected payment components and PCN Participation checks passed.\n")
+
+# The full published aggregate is independently selected at the same snapshot.
+full <- select_total_payments(finance, selected$snapshot_date)
+stopifnot(nrow(full) == 1L, full$Total_Payments == 999000)
+full_inputs <- data.frame(Total_Payments = sum(full$Total_Payments),
+  Registered = 100, ONS = 90)
+full_fixed <- model_fixed_total_payment_rates(full_inputs)
+stopifnot(full_fixed$Payment_Per_Registered == 9990,
+  full_fixed$Payment_Per_ONS == 11100,
+  full_fixed$Rate_Change == 1110,
+  !("PCN_Participation" %in% names(full_fixed)),
+  isTRUE(all.equal(local$Total_Payments[1], 5657.8)),
+  isTRUE(all.equal(loss$Potential_Reduction[1], 565.78)))
+# An unavailable total at the selected snapshot must not use an older year.
+older_total <- finance
+older_total$Effective_Snapshot_Date[older_total$Metric ==
+  "Total NHS Payments to General Practice Minus Deductions"] <- as.Date("2024-03-31")
+must_fail(select_total_payments(older_total, selected$snapshot_date), "missing")
+invalid_total <- finance
+invalid_total$Metric_Value[invalid_total$Metric ==
+  "Total NHS Payments to General Practice Minus Deductions"] <- NA_real_
+must_fail(select_total_payments(invalid_total, selected$snapshot_date), "invalid amounts")
+
+cat("Separate payment bases and PCN Participation checks passed.\n")

@@ -44,7 +44,7 @@ Render `05_Patient_List_Focused.Rmd` with `rmarkdown::render()` in the existing
 R and warehouse environment. Its layout follows
 `05_Patient_List_Focused_Clean.docx`: disparities, population trends, July
 snapshots, IMD, regions, ICBs, GP FTE, fixed-total payments, then payment loss.
-The report contains 26 charts, including the regional IMD quintile snapshot,
+The report contains 27 charts, including the regional IMD quintile snapshot,
 the ICB decile map and the two funding loss-per-resident charts. The removed
 IMD quintile time-series charts and their comparison/coverage tables are no
 longer rendered.
@@ -184,7 +184,7 @@ in their original Period column; the reference date is not their observation
 date. National fixed-payment chart rows now retain the full payment total and
 both population counts as well as the plotted average.
 
-At successful completion, `manifest.csv` lists all 26 chart files, sources and
+At successful completion, `manifest.csv` lists all 27 chart files, sources and
 row counts. Coverage must exactly match the report's chart IDs. Only obsolete
 CSV files named in a previous generated manifest are removed; unrelated files
 are retained. CSVs contain aggregate chart data, not individual patient records.
@@ -199,7 +199,7 @@ retained denominators and geography validation. These fixtures require only base
 
 ## Payment components and chart styling
 
-All national, regional and ICB funding scenarios use Global Sum, MPIG
+Potential-loss scenarios at national, regional and ICB level use Global Sum, MPIG
 Correction Factor, Balance of PMS Expenditure, Out of Area in Hours Urgent
 Care and GP Extended Hours Access from one latest payment snapshot. The five
 headers were verified against the NHS England 2024/25 practice CSV. Matching
@@ -208,16 +208,43 @@ fails with its name. Signed adjustments are retained. Published aggregate
 payments and recorded PCN Participation are excluded from the calculation.
 
 The model adds PCN Participation at £41.578 per baseline registered patient.
-It is applied once before the selected total is divided by either registered
-patients or ONS residents, or used for the proportional loss scenario.
+It is applied once before the selected total is used for the proportional
+loss scenario. The fixed-total averages instead use the published Total NHS
+Payments to General Practice Minus Deductions without any custom top-up.
 Selected published payments and the modelled addition reconcile to England,
 including amounts without a local assignment. The England component table
 and funding CSVs expose the breakdown and rate separately.
 
 The age time-series panels begin at zero. Age and sex percentage labels show
-the signed raw difference in brackets. All three maps use the same discrete
+the signed raw difference in brackets. All four maps use the same discrete
 blue-to-red palette, from lowest to highest differences, with missing values
 grey. Deciles still rank differences and do not identify the zero point.
 
 Run `Rscript tests/test_payment_components.R` for the selection, signed
 adjustments, custom PCN rate, aggregation and both funding models.
+
+## Separate fixed-total and potential-loss payment bases
+
+The England, regional and ICB fixed-total average comparisons and their ICB
+map use the full published field `Total NHS Payments to General Practice Minus
+Deductions`. They have no custom PCN Participation top-up. This field is read
+at the same payment snapshot as the narrowed loss components; missing data at
+that snapshot must not fall back to a different payment year. Local full
+payment totals plus unassigned amounts reconcile to England independently
+of the narrowed payment model.
+
+Potential losses retain the five selected components plus £41.578 per
+baseline registered patient in modelled PCN Participation. The narrowed
+component summary is displayed in the loss section. The new loss map uses
+annual loss per ONS resident with ten blue-to-red deciles and includes total
+loss, percentage loss, populations and components in its CSV. Zero-resident
+rates remain undefined and grey. The fixed-total payment map retains the
+ONS-average-minus-registered-average difference in pounds per person.
+
+Funding chart CSVs include a `Payment_Basis` field distinguishing the two
+models. There are 27 chart CSVs plus the manifest after a successful render.
+The payment R fixture demonstrates a full published total of £999,000
+versus a narrowed modelled total of £5,657.80, checks fixed-total averages
+separately from loss calculations and rejects missing/invalid aggregate
+payments at the selected snapshot. Portable integration checks ensure each
+scenario and map receives the intended payment base.

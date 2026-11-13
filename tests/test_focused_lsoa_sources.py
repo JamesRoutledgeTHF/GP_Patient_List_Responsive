@@ -94,7 +94,7 @@ class PracticeSourceTests(unittest.TestCase):
         chunks = re.findall(r"^```\{r\s+([^,}\s]+)[^\n]*\}\n(.*?)^```", REPORT, re.M | re.S)
         charts = [(name, code) for name, code in chunks
                   if "label_chart(" in code and name != "setup"]
-        self.assertEqual(len(charts), 26)
+        self.assertEqual(len(charts), 27)
         for name, code in charts:
             source = "LSOA-level registrations" if name in {"icb-decile-map", "region-imd-quintile-chart", "imd-snapshot-chart", "region-snapshot-chart", "icb-snapshot-chart"} else "Practice-level registrations"
             self.assertIn('"' + source + '"', code, name)
@@ -127,6 +127,24 @@ class PracticeSourceTests(unittest.TestCase):
                       chunks["patients-per-gp-icb-map-prepare"])
         self.assertIn('"ons-minus-registered"',
                       chunks["icb-payment-per-capita-map-prepare"])
+
+    def test_payment_bases_are_routed_separately(self):
+        chunks = dict(re.findall(
+            r"^```\{r\s+([^,}\s]+)[^\n]*\}\n(.*?)^```", REPORT, re.M | re.S))
+        fixed = chunks["fixed-total-payment-prepare"]
+        for scope in ("national", "regional", "icb"):
+            self.assertIn(
+                f"model_fixed_total_payment_rates({scope}_full_payment_input)", fixed)
+            self.assertNotIn(
+                f"model_fixed_total_payment_rates({scope}_payment_scenario)", fixed)
+        self.assertIn("icb_fixed_payment_rates",
+                      chunks["icb-payment-per-capita-map-prepare"])
+        self.assertIn("icb_payment_scenario", chunks["icb-payment-loss-map-prepare"])
+        self.assertIn("Loss_Per_ONS_Resident", chunks["icb-payment-loss-map-prepare"])
+        for name in ("national-fixed-total-payment-chart", "regional-fixed-total-payment-chart",
+                     "icb-fixed-total-payment-chart", "icb-payment-per-capita-difference-map"):
+            self.assertIn("Total NHS Payments to General Practice Minus Deductions", chunks[name])
+            self.assertIn("no custom PCN top-up", chunks[name])
 
 
 if __name__ == "__main__":

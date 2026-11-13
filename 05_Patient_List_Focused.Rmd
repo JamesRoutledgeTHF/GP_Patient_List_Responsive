@@ -1612,6 +1612,56 @@ if (abs(sum(regional_payment_scenario$Total_Payments) + payment_unassigned_regio
   stop("Selected payments and modelled PCN Participation do not reconcile to England.")
 }
 
+# The fixed-total scenario uses the published aggregate without a PCN top-up.
+full_payment_by_practice <- select_total_payments(
+  finance_datasets, payment_snapshot_date
+) %>%
+  group_by(Practice_Code) %>%
+  summarise(Total_Payments = sum(Total_Payments), .groups = "drop")
+
+national_full_payment_input <- tibble::tibble(
+  Geography = "England", Total_Payments = sum(full_payment_by_practice$Total_Payments),
+  Registered = national_snapshot$Registered, ONS = national_snapshot$ONS
+)
+regional_full_payment_input <- full_payment_by_practice %>%
+  inner_join(practice_region_lookup, by = "Practice_Code", na_matches = "never") %>%
+  group_by(NHS_Region) %>%
+  summarise(Total_Payments = sum(Total_Payments), .groups = "drop") %>%
+  full_join(practice_region_registered, by = "NHS_Region") %>%
+  mutate(Total_Payments = replace_na(Total_Payments, 0)) %>%
+  left_join(region_snapshot %>%
+    transmute(NHS_Region = normalise_region_name(NHSER26NM), ONS),
+    by = "NHS_Region")
+icb_full_payment_input <- full_payment_by_practice %>%
+  inner_join(practice_icb_lookup, by = "Practice_Code", na_matches = "never") %>%
+  group_by(ICB_Key) %>%
+  summarise(Total_Payments = sum(Total_Payments), .groups = "drop") %>%
+  full_join(practice_icb_registered %>% rename(ICB_Registered_Name = ICB),
+    by = "ICB_Key") %>%
+  mutate(Total_Payments = replace_na(Total_Payments, 0)) %>%
+  left_join(icb_population_snapshot, by = "ICB_Key") %>%
+  mutate(ICB = coalesce(ICB_Population_Name, ICB_Registered_Name))
+full_payment_unassigned_region <- full_payment_by_practice %>%
+  anti_join(practice_region_lookup, by = "Practice_Code", na_matches = "never") %>%
+  summarise(Amount = sum(Total_Payments)) %>% pull(Amount)
+full_payment_unassigned_icb <- full_payment_by_practice %>%
+  anti_join(practice_icb_lookup, by = "Practice_Code", na_matches = "never") %>%
+  summarise(Amount = sum(Total_Payments)) %>% pull(Amount)
+if (abs(sum(regional_full_payment_input$Total_Payments) + full_payment_unassigned_region -
+        national_full_payment_input$Total_Payments) > 0.01 ||
+    abs(sum(icb_full_payment_input$Total_Payments) + full_payment_unassigned_icb -
+        national_full_payment_input$Total_Payments) > 0.01) {
+  stop("Published full-payment totals do not reconcile to England.")
+}
+full_payment_basis <- "Total NHS Payments to General Practice Minus Deductions"
+selected_payment_basis <- "Five selected payment components plus modelled PCN Participation"
+national_payment_scenario$Payment_Basis <- selected_payment_basis
+regional_payment_scenario$Payment_Basis <- selected_payment_basis
+icb_payment_scenario$Payment_Basis <- selected_payment_basis
+national_full_payment_input$Payment_Basis <- full_payment_basis
+regional_full_payment_input$Payment_Basis <- full_payment_basis
+icb_full_payment_input$Payment_Basis <- full_payment_basis
+
 payment_currency <- function(x, accuracy = 1) {
   scales::dollar(x, prefix = gbp_symbol, accuracy = accuracy)
 }
@@ -1690,9 +1740,9 @@ payment_loss_per_resident_table <- function(data, geography, caption) {
 ```
 
 ```{r fixed-total-payment-prepare, include=FALSE}
-national_fixed_payment_rates <- model_fixed_total_payment_rates(national_payment_scenario)
-regional_fixed_payment_rates <- model_fixed_total_payment_rates(regional_payment_scenario)
-icb_fixed_payment_rates <- model_fixed_total_payment_rates(icb_payment_scenario)
+national_fixed_payment_rates <- model_fixed_total_payment_rates(national_full_payment_input)
+regional_fixed_payment_rates <- model_fixed_total_payment_rates(regional_full_payment_input)
+icb_fixed_payment_rates <- model_fixed_total_payment_rates(icb_full_payment_input)
 
 fixed_payment_rate_chart <- function(data, geography, title) {
   chart_data <- data %>%
@@ -1731,7 +1781,7 @@ fixed_payment_rate_chart <- function(data, geography, title) {
       subtitle = paste("Payment snapshot:", format(payment_snapshot_date, "%d %b %Y"),
                        "| Population:", format(snapshot_date, "%B %Y")),
       x = "Average annual payment per person", y = NULL, colour = "Population denominator",
-      caption = "Each geography's selected payment total stays unchanged; only the denominator changes."
+      caption = "Each geography's full published payment total stays unchanged; only the denominator changes."
     ) +
     theme_minimal(base_size = 11) +
     theme(legend.position = "top", panel.grid.major.y = element_blank(),
@@ -1762,21 +1812,7 @@ fixed_payment_rate_table <- function(data, geography, caption) {
 
 This comparison keeps overall payments the same but changes the population denominator.
 
-For each geography, the selected annual payment total is divided separately by the practice-level registered count and the ONS population. The model uses **Global Sum, MPIG Correction Factor, Balance of PMS Expenditure, Out of Area in Hours Urgent Care and GP Extended Hours Access** from the latest payment snapshot (`r format(payment_snapshot_date, "%d %B %Y")`); populations refer to `r format(snapshot_date, "%B %Y")`. A custom **PCN Participation** amount of **£`r formatC(pcn_participation_rate, format = "f", digits = 3)` per baseline registered patient** is added once. The same selected payment total, including this modelled addition, is held fixed for both population denominators. Recorded PCN Participation payments and other published payment categories are excluded. Registrations and payments follow practice assignment, while the ONS denominator follows residence; cross-boundary registration can affect local comparisons. ICBs use April 2026 geography. Amounts without a region assignment are `r payment_currency(payment_unassigned_region)`; amounts without an ICB assignment are `r payment_currency(payment_unassigned_icb)` and are excluded from the respective local totals. A higher payment per resident is an average under a fixed budget, not extra income.
-
-```{r payment-component-summary, results='asis'}
-data.frame(
-  Component = c(unname(selected_payment_component_names),
-    "PCN Participation (modelled)", "Selected payment total"),
-  Annual_Payment = c(
-    unlist(national_payment_scenario[payment_components], use.names = FALSE),
-    national_payment_scenario$PCN_Participation,
-    national_payment_scenario$Total_Payments
-  )
-) %>%
-  transmute(Component, `England annual amount` = payment_currency(Annual_Payment)) %>%
-  report_table(caption = "Payment components used in the England scenarios")
-```
+For each geography, **Total NHS Payments to General Practice Minus Deductions** is divided separately by practice-level registrations and ONS residents. The full published payment total is held fixed in both calculations; no custom PCN Participation top-up is added in this section. Payment snapshot: `r format(payment_snapshot_date, "%d %B %Y")`; population: `r format(snapshot_date, "%B %Y")`. Registrations and payments follow practice assignment, while ONS residents follow residence. ICBs use April 2026 geography. Published full payments without a region assignment total `r payment_currency(full_payment_unassigned_region)`, and without an ICB assignment total `r payment_currency(full_payment_unassigned_icb)`; these are excluded from the respective local comparisons. A higher payment per resident is an average under a fixed budget, not extra income.
 
 ```{r national-fixed-total-payment-chart, fig.width=8, fig.height=5}
 label_chart(
@@ -1802,12 +1838,12 @@ national_fixed_payment_rates %>%
     subtitle = paste("Payment snapshot:", format(payment_snapshot_date, "%d %b %Y"),
                      "| Population:", format(snapshot_date, "%B %Y")),
     x = "Population denominator", y = "Average annual payment per person",
-    caption = "The same selected national payment total is used in both bars."
+    caption = "The same full published national payment total is used in both bars."
   ) +
   theme_minimal(base_size = 12) +
   theme(legend.position = "none", panel.grid.minor = element_blank()),
   "Practice-level registrations",
-  "Payments: selected practice-level annual payment components plus modelled PCN Participation; aggregated to the chart geography."
+  "Payments: practice-level annual payment data, Total NHS Payments to General Practice Minus Deductions; no custom PCN top-up; aggregated to the chart geography."
 )
 ```
 
@@ -1823,7 +1859,7 @@ label_chart(
 fixed_payment_rate_chart(regional_fixed_payment_rates, "NHS_Region",
                          "Regional average payments with total payments unchanged"),
   "Practice-level registrations",
-  "Payments: selected practice-level annual payment components plus modelled PCN Participation; aggregated to the chart geography."
+  "Payments: practice-level annual payment data, Total NHS Payments to General Practice Minus Deductions; no custom PCN top-up; aggregated to the chart geography."
 )
 ```
 
@@ -1839,13 +1875,13 @@ label_chart(
 fixed_payment_rate_chart(icb_fixed_payment_rates, "ICB",
                          "ICB average payments with totals unchanged (April 2026 geography)"),
   "Practice-level registrations",
-  "Payments: selected practice-level annual payment components plus modelled PCN Participation; aggregated to the chart geography."
+  "Payments: practice-level annual payment data, Total NHS Payments to General Practice Minus Deductions; no custom PCN top-up; aggregated to the chart geography."
 )
 ```
 
 ### Map of the difference
 
-ONS-based payment per resident minus payment per registered patient; total payments held fixed. Positive differences mean a higher average when the same selected annual payment total is divided by ONS residents. Negative differences indicate a lower ONS-based average. The colours are ten deciles of this signed difference in GBP per person per year, rather than the two rates separately. Each map has its own decile thresholds; grey indicates unavailable inputs.
+ONS-based payment per resident minus payment per registered patient; total payments held fixed. Positive differences mean a higher average when the same full published annual payment total is divided by ONS residents. Negative differences indicate a lower ONS-based average. The colours are ten deciles of this signed difference in GBP per person per year, rather than the two rates separately. Each map has its own decile thresholds; grey indicates unavailable inputs.
 
 ```{r icb-payment-per-capita-map-prepare, include=FALSE}
 icb_payment_per_capita_map_values <- prepare_icb_difference_map(
@@ -1868,13 +1904,13 @@ label_chart(
     coord_sf(crs = sf::st_crs(27700), datum = NA) +
     labs(title = "Difference in average annual payment per person by ICB",
       subtitle = paste(format(snapshot_date, "%B %Y"), "| Payment snapshot:", format(payment_snapshot_date, "%d %b %Y")),
-      caption = "ONS-based payment per resident minus payment per registered patient; total payments held fixed.\nPositive differences mean a higher average when the same selected annual payment total is divided by ONS residents. Negative differences indicate a lower ONS-based average.\nONS April 2026 ICB boundaries. Blue indicates lower signed differences and red indicates higher ones; identical values stay together.") +
+      caption = "ONS-based payment per resident minus payment per registered patient; total payments held fixed.\nPositive differences mean a higher average when the same full published annual payment total is divided by ONS residents. Negative differences indicate a lower ONS-based average.\nONS April 2026 ICB boundaries. Blue indicates lower signed differences and red indicates higher ones; identical values stay together.") +
     theme_void(base_size = 11) +
     theme(legend.position = "right", plot.title = element_text(face = "bold"),
           plot.subtitle = element_text(margin = margin(b = 8)),
           plot.margin = margin(8, 8, 8, 8)),
   "Practice-level registrations",
-  "Payments: selected practice-level annual payment components plus modelled PCN Participation; aggregated to April 2026 ICBs. Practice registrations follow practice assignment; ONS populations follow residence."
+  "Payments: practice-level annual payment data, Total NHS Payments to General Practice Minus Deductions; no custom PCN top-up; aggregated to April 2026 ICBs. Practice registrations follow practice assignment; ONS populations follow residence."
 )
 ```
 
@@ -1894,6 +1930,22 @@ fixed_payment_rate_table(icb_fixed_payment_rates, "ICB",
 ```
 
 # If payments decreased alongside reduction in list size
+
+This section uses **Global Sum, MPIG Correction Factor, Balance of PMS Expenditure, Out of Area in Hours Urgent Care and GP Extended Hours Access**, plus modelled **PCN Participation at £`r formatC(pcn_participation_rate, format = "f", digits = 3)` per baseline registered patient**. Recorded PCN Participation and all other payment categories are excluded from this narrowed total. It uses the same payment snapshot as the fixed-total section. Selected amounts without a region assignment total `r payment_currency(payment_unassigned_region)`; without an ICB assignment they total `r payment_currency(payment_unassigned_icb)`.
+
+```{r payment-component-summary, results='asis'}
+data.frame(
+  Component = c(unname(selected_payment_component_names),
+    "PCN Participation (modelled)", "Selected payment total"),
+  Annual_Payment = c(
+    unlist(national_payment_scenario[payment_components], use.names = FALSE),
+    national_payment_scenario$PCN_Participation,
+    national_payment_scenario$Total_Payments
+  )
+) %>%
+  transmute(Component, `England annual amount` = payment_currency(Annual_Payment)) %>%
+  report_table(caption = "Selected payment components used only in the England loss scenario")
+```
 
 This section examines how much money could be removed from practices if registered lists were reduced to be in line with the ONS. It uses the calculated payment per capita before removal and multiplies it by the removed number of patients, using the same five payment components and the modelled PCN Participation addition.
 
@@ -1960,6 +2012,51 @@ label_chart(
 )
 ```
 
+### ICB map of potential annual payment loss per resident
+
+This map divides each ICB's potential annual loss by its ONS resident population. It uses the narrowed five-component payment total plus the modelled PCN Participation addition. It uses ten decile colours: blue for lower loss per resident, red for higher loss per resident, and grey where a rate is unavailable. The CSV includes the selected baseline payments, annual loss, percentage loss, both populations and loss per person.
+
+```{r icb-payment-loss-map-prepare, include=FALSE}
+icb_loss_map <- icb_boundaries %>%
+  select(ICB26CD, ICB26NM) %>%
+  left_join(icb_payment_scenario, by = c("ICB26CD" = "ICB_Key"))
+icb_loss_map_classification <- classify_icb_map_deciles(icb_loss_map$Loss_Per_ONS_Resident)
+icb_loss_map$Map_Decile <- icb_loss_map_classification$decile
+icb_loss_map$Map_Decile_Label <- icb_loss_map_classification$label
+icb_loss_map$Map_Measure <- "Potential annual loss divided by ONS residents"
+icb_loss_map$Map_Unit <- "GBP per ONS resident per year"
+```
+
+```{r icb-payment-loss-per-resident-map, fig.width=9, fig.height=10}
+label_chart(
+  ggplot(icb_loss_map) +
+    geom_sf(aes(fill = Map_Decile_Label), colour = "white", linewidth = 0.25) +
+    scale_fill_manual(values = icb_map_colours, drop = FALSE,
+      name = "Loss per resident decile\n(GBP per person per year)") +
+    coord_sf(crs = sf::st_crs(27700), datum = NA) +
+    labs(title = "Potential annual payment loss per ONS resident by ICB",
+      subtitle = paste(format(snapshot_date, "%B %Y"), "| Payment snapshot:",
+        format(payment_snapshot_date, "%d %b %Y")),
+      caption = "Five selected payment components plus modelled PCN Participation.\nAnnual modelled loss divided by ONS residents; this is an illustrative scenario.\nONS April 2026 boundaries. Blue indicates lower loss per resident and red higher loss; ties stay together.") +
+    theme_void(base_size = 11) +
+    theme(legend.position = "right", plot.title = element_text(face = "bold"),
+          plot.subtitle = element_text(margin = margin(b = 8)),
+          plot.margin = margin(8, 8, 8, 8)),
+  "Practice-level registrations",
+  "Payments: selected practice-level annual payment components plus modelled PCN Participation. Per-person denominator: ONS residents."
+)
+```
+
+```{r icb-payment-loss-map-decile-key, results='asis'}
+icb_loss_map_classification$key %>%
+  transmute(`Map decile` = Decile, ICBs,
+    `Lowest annual loss per ONS resident` = ifelse(is.na(Minimum_Pct), "Empty group",
+      scales::number(Minimum_Pct, accuracy = 0.01)),
+    `Highest annual loss per ONS resident` = ifelse(is.na(Maximum_Pct), "Empty group",
+      scales::number(Maximum_Pct, accuracy = 0.01))) %>%
+  report_table(caption = "Potential payment loss map deciles (GBP per ONS resident per year)")
+```
+
 ```{r icb-payment-loss-per-resident-table, results='asis'}
 payment_loss_per_resident_table(icb_payment_scenario, "ICB",
   "Population denominators and annual modelled loss per person")
@@ -1973,7 +2070,7 @@ payment_loss_table(icb_payment_scenario, "ICB", "ICB payment loss scenarios")
 
 # Chart data files
 
-Every chart's underlying data are saved as an unrounded CSV in `r params$chart_data_dir` when this report renders. Filenames match the chart identifiers. Map CSVs contain ICB codes, both source rates, the difference, decile and raw inputs; geometry is omitted. Dates use ISO format and unavailable values are blank. A manifest links each CSV to its chart and records sources and row counts. The payment map holds each ICB's annual payment total fixed.
+Every chart's underlying data are saved as an unrounded CSV in `r params$chart_data_dir` when this report renders. Filenames match the chart identifiers. Map CSVs contain ICB codes, the plotted measure, decile and raw inputs; rate-difference maps also retain both source rates. Geometry is omitted. Dates use ISO format and unavailable values are blank. A manifest links each CSV to its chart and records sources and row counts. The fixed-total payment map uses the full published total; the payment-loss map uses the narrowed components plus modelled PCN Participation.
 
 ```{r chart-data-manifest, include=FALSE}
 chart_csv$finish(c(
@@ -2002,6 +2099,7 @@ chart_csv$finish(c(
   "regional-payment-loss-chart",
   "regional-payment-loss-per-resident-chart",
   "icb-payment-loss-chart",
-  "icb-payment-loss-per-resident-chart"
+  "icb-payment-loss-per-resident-chart",
+  "icb-payment-loss-per-resident-map"
 ))
 ```

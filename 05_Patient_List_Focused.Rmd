@@ -604,8 +604,8 @@ ggplot(
 label_chart(
 ggplot(
   age_time_series,
-  aes(x = Period, y = Population, colour = Source,
-      linetype = Sex, group = interaction(Source, Sex))
+  aes(x = Period, y = Population, colour = Sex,
+      linetype = Source, group = interaction(Source, Sex))
 ) +
   geom_vline(
     xintercept = as.numeric(as.Date("2021-07-01")),
@@ -621,9 +621,10 @@ ggplot(
     size = 1.3
   ) +
   facet_wrap(~ Age_Band, ncol = 2) +
-  scale_colour_manual(values = c(
-    "Registered patients" = "#2166AC",
-    "ONS population estimate" = "#B2182B"
+  scale_colour_manual(values = c(Female = "#B2182B", Male = "#2166AC")) +
+  scale_linetype_manual(values = c(
+    "Registered patients" = "solid",
+    "ONS population estimate" = "dotted"
   )) +
   scale_x_date(limits = c(start_date, end_date), breaks = history_year_breaks(2L), date_labels = "%Y") +
   scale_y_continuous(breaks = seq(0, 10e6, by = 1e6),
@@ -635,7 +636,7 @@ ggplot(
     subtitle = "Ages 0–19, 20–39, 40–59 and 60+; female and male counts for each source",
     x = NULL,
     y = "Population",
-    colour = "Population source", linetype = "Sex",
+    colour = "Sex", linetype = "Population source",
     caption = "Dashed line: Census 2021 year; the cause of any turning point is not established by the chart."
   ) +
   theme_minimal(base_size = 11) +
